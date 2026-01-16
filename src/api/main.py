@@ -29,6 +29,7 @@ from src.pipeline.orchestrator import run_automated_pipeline
 from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
+from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
 from src.pipeline.update_csv import full_update_csv
 from fastapi.concurrency import run_in_threadpool
 
@@ -104,6 +105,138 @@ class BaseCurveResponse(BaseModel):
         ...,
         description="Curvas base por fecha (formato: {'YYYY-MM-DD': [P1, P2, ..., P24]})"
     )
+
+
+class ValidateAdjustmentsRequest(BaseModel):
+    """Schema para solicitud de validación de ajustes horarios"""
+    fecha: str = Field(..., description="Fecha de predicción (YYYY-MM-DD)")
+    tipo_dia: str = Field(..., description="Tipo de día: 'laboral', 'festivo', 'weekend'")
+    predicciones_actuales: List[float] = Field(
+        ...,
+        description="24 valores actuales de predicción (P1-P24) en MWh",
+        min_length=24,
+        max_length=24
+    )
+    ajustes_solicitados: List[float] = Field(
+        ...,
+        description="24 ajustes solicitados (positivo=aumentar, negativo=disminuir, 0=sin cambio)",
+        min_length=24,
+        max_length=24
+    )
+    ucp: str = Field(
+        default="Antioquia",
+        description="UCP para cargar modelos (default: Antioquia)"
+    )
+
+    @field_validator('fecha')
+    @classmethod
+    def validate_fecha_format(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+
+    @field_validator('tipo_dia')
+    @classmethod
+    def validate_tipo_dia(cls, v: str) -> str:
+        valid_types = ['laboral', 'festivo', 'weekend']
+        if v.lower() not in valid_types:
+            raise ValueError(f'tipo_dia debe ser uno de: {valid_types}')
+        return v.lower()
+
+    @field_validator('predicciones_actuales', 'ajustes_solicitados')
+    @classmethod
+    def validate_list_length(cls, v: List[float]) -> List[float]:
+        if len(v) != 24:
+            raise ValueError('Debe proporcionar exactamente 24 valores (uno por hora)')
+        return v
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "fecha": "2024-12-15",
+                "tipo_dia": "laboral",
+                "predicciones_actuales": [1197.0, 1134.0, 1071.0, 1008.0, 945.0, 882.0,
+                                          819.0, 1260.0, 1386.0, 1449.0, 1512.0, 1575.0,
+                                          1638.0, 1701.0, 1764.0, 1827.0, 1890.0, 1953.0,
+                                          2016.0, 2079.0, 2142.0, 2205.0, 2268.0, 2331.0],
+                "ajustes_solicitados": [0, 0, 0, 200.0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "ucp": "Antioquia"
+            }
+        }
+
+
+class PeriodComparison(BaseModel):
+    """Schema para comparación de un periodo individual"""
+    periodo: str = Field(..., description="Período (P1-P24)")
+    valor_original: float = Field(..., description="Valor original de predicción (MWh)")
+    ajuste_solicitado: float = Field(..., description="Ajuste solicitado por usuario")
+    ajuste_aplicado: float = Field(..., description="Ajuste realmente aplicado")
+    valor_final: float = Field(..., description="Valor final después de ajuste")
+    razon_modificacion: Optional[str] = Field(None, description="Razón si el ajuste fue modificado")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "periodo": "P4",
+                "valor_original": 1008.0,
+                "ajuste_solicitado": 200.0,
+                "ajuste_aplicado": 100.0,
+                "valor_final": 1108.0,
+                "razon_modificacion": "Ajuste reducido de +200.0 MWh a +100.0 MWh para preservar valle nocturno (desviación 18.5% > 15%)"
+            }
+        }
+
+
+class ValidateAdjustmentsResponse(BaseModel):
+    """Schema para respuesta de validación de ajustes horarios"""
+    valores_ajustados: List[float] = Field(
+        ...,
+        description="24 valores ajustados optimizados (P1-P24) en MWh"
+    )
+    comparacion: List[PeriodComparison] = Field(
+        ...,
+        description="Comparación período por período"
+    )
+    metadata: Dict[str, Any] = Field(
+        ...,
+        description="Metadatos del proceso de validación"
+    )
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "valores_ajustados": [1197.5, 1134.2, 1071.0, 1108.0, 945.0, 882.0,
+                                      819.0, 1260.0, 1386.0, 1449.0, 1512.0, 1575.0,
+                                      1638.0, 1701.0, 1764.0, 1827.0, 1890.0, 1953.0,
+                                      2016.0, 2079.0, 2142.0, 2205.0, 2268.0, 2331.0],
+                "comparacion": [
+                    {
+                        "periodo": "P1",
+                        "valor_original": 1197.0,
+                        "ajuste_solicitado": 0.0,
+                        "ajuste_aplicado": 0.5,
+                        "valor_final": 1197.5,
+                        "razon_modificacion": None
+                    }
+                ],
+                "metadata": {
+                    "cluster_id": 12,
+                    "metodo": "normal",
+                    "total_original": 29800.5,
+                    "total_ajustado": 30100.2,
+                    "cambio_total": 299.7,
+                    "desviacion_promedio_forma": 8.5,
+                    "iteraciones_convergencia": 2,
+                    "periodos_modificados": 3,
+                    "ajustes_extremos_detectados": 1,
+                    "tolerancia_aplicada": 15.0
+                }
+            }
+        }
+
 
 class ForecastTypeItem(BaseModel):
     """Entrada para mapear el tipo de pronóstico por día"""
@@ -2944,6 +3077,159 @@ async def list_models(ucp: Optional[str] = None):
         }
 
 
+@app.post(
+    "/validate-hourly-adjustments",
+    response_model=ValidateAdjustmentsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Valida y optimiza ajustes a predicciones horarias",
+    description="""
+    Valida ajustes manuales del usuario a predicciones horarias mientras preserva
+    la forma característica del cluster histórico.
+
+    - Carga el cluster correspondiente a la fecha y UCP
+    - Aplica soft constraints (tolerancia 15%) para preservar la forma
+    - Retorna valores ajustados optimizados + comparación detallada
+    - Stateless: no persiste cambios, solo valida y devuelve
+
+    Casos de uso:
+    - Usuario ajusta manualmente horas específicas del pronóstico
+    - Sistema verifica que ajustes no distorsionen patrón histórico
+    - Devuelve sugerencias optimizadas manteniendo intención del usuario
+    """
+)
+async def validate_hourly_adjustments(
+    request: ValidateAdjustmentsRequest
+) -> ValidateAdjustmentsResponse:
+    """
+    Valida y optimiza ajustes manuales a predicciones horarias.
+
+    El algoritmo aplica soft constraints iterativos para preservar la forma
+    del cluster mientras respeta la intención del usuario en sus ajustes.
+    """
+    try:
+        logger.info(f"Validando ajustes horarios para {request.fecha}, UCP: {request.ucp}")
+
+        # 1. Determinar directorio de modelos para el UCP
+        models_dir = Path('models') / request.ucp
+        if not models_dir.exists():
+            logger.warning(f"Models directory {models_dir} no encontrado, usando directorio default")
+            models_dir = Path('models')
+
+        logger.info(f"Cargando modelos desde: {models_dir}")
+
+        # 2. Cargar motor de desagregación horaria
+        try:
+            hourly_engine = HourlyDisaggregationEngine(
+                auto_load=True,
+                models_dir=str(models_dir),
+                ucp=request.ucp
+            )
+        except Exception as e:
+            logger.error(f"Error cargando HourlyDisaggregationEngine: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error cargando modelos de desagregación horaria: {str(e)}"
+            )
+
+        # Verificar que los modelos estén entrenados
+        if not hourly_engine.normal_disaggregator.is_fitted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Modelo de desagregación normal no entrenado para UCP {request.ucp}"
+            )
+
+        # 3. Determinar tipo de día y obtener cluster
+        fecha = pd.to_datetime(request.fecha)
+
+        # Determinar si es día especial
+        is_special = False
+        if hourly_engine.special_disaggregator.is_fitted:
+            is_special = hourly_engine.special_disaggregator.is_special_day(fecha)
+
+        # Seleccionar disaggregator y obtener cluster info
+        if is_special:
+            logger.info(f"Fecha {request.fecha} identificada como día especial")
+            disaggregator = hourly_engine.special_disaggregator
+            method = "special"
+
+            # Obtener cluster para la fecha
+            mmdd = fecha.strftime("%m-%d")
+            cluster_id = disaggregator.cluster_by_date.get(mmdd, -1)
+
+            if cluster_id == -1:
+                # Usando perfil promedio de festivos
+                logger.info(f"Usando perfil promedio de festivos para {mmdd}")
+                senda_referencia = disaggregator.average_holiday_profile
+            else:
+                logger.info(f"Usando cluster {cluster_id} para fecha especial {mmdd}")
+                senda_referencia = disaggregator.cluster_profiles.loc[cluster_id].values
+        else:
+            logger.info(f"Fecha {request.fecha} identificada como día normal")
+            disaggregator = hourly_engine.normal_disaggregator
+            method = "normal"
+
+            # Obtener cluster para el día de la semana
+            dayofweek = fecha.dayofweek
+            cluster_id = disaggregator.cluster_by_dayofweek.get(dayofweek, 0)
+
+            logger.info(f"Usando cluster {cluster_id} para día de semana {dayofweek}")
+            senda_referencia = disaggregator.cluster_profiles.loc[cluster_id].values
+
+        # Log información del cluster
+        logger.info(
+            f"Cluster info: id={cluster_id}, method={method}, "
+            f"senda_sum={senda_referencia.sum():.4f}"
+        )
+
+        # 4. Crear validador y ejecutar
+        validator = HourlyAdjustmentValidator(
+            default_tolerance=0.15,  # 15% desviación permitida
+            max_iterations=3
+        )
+
+        # 5. Validar ajustes
+        result = validator.validate_adjustments(
+            predicciones_actuales=request.predicciones_actuales,
+            ajustes_solicitados=request.ajustes_solicitados,
+            senda_referencia=senda_referencia,
+            cluster_id=cluster_id,
+            method=method
+        )
+
+        logger.info(
+            f"Validación completa: "
+            f"total_ajustado={result['metadata']['total_ajustado']:.2f} MWh, "
+            f"periodos_modificados={result['metadata']['periodos_modificados']}, "
+            f"desviacion_forma={result['metadata']['desviacion_promedio_forma']:.2f}%"
+        )
+
+        # 6. Construir y retornar respuesta
+        return ValidateAdjustmentsResponse(**result)
+
+    except HTTPException:
+        # Re-lanzar excepciones HTTP
+        raise
+    except FileNotFoundError as e:
+        logger.error(f"Archivos de modelo no encontrados: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Modelos no encontrados para UCP {request.ucp}. Por favor entrene los modelos primero."
+        )
+    except ValueError as e:
+        logger.error(f"Error de validación: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error en validación de datos: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error inesperado validando ajustes: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al validar ajustes: {str(e)}"
+        )
+
+
 @app.get("/", status_code=status.HTTP_200_OK)
 async def root():
     """
@@ -2957,6 +3243,7 @@ async def root():
         "endpoints": {
             "POST /predict": "Genera predicción de demanda con granularidad horaria",
             "POST /api/v1/base-curve": "Obtiene curvas base de demanda horaria para un rango de fechas",
+            "POST /validate-hourly-adjustments": "Valida y optimiza ajustes manuales a predicciones horarias",
             "POST /retrain": "Reentrenamiento manual del modelo (actualiza datos + entrena nuevo modelo)",
             "GET /health": "Estado del sistema",
             "GET /models": "Lista de modelos disponibles"
