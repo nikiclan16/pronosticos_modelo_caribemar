@@ -805,16 +805,22 @@ class ForecastPipeline:
 
         def get_rolling_values(df, target_date, days_back, column='demanda_total', ultimo_historico=None):
             """
-            Obtiene valores de una ventana de tiempo basada en fechas.
+            Obtiene valores de una ventana de tiempo basada en fechas, excluyendo época navideña.
+
             CRITICO: Solo usa datos historicos REALES, NO predicciones.
-            NUEVO: Excluye época navideña (dic 23 - ene 6) para evitar contaminación.
+            FILTRO: Excluye época navideña (dic 23 - ene 6) para evitar contaminación por días atípicos.
+            EXPANSIÓN: Si no hay suficientes datos, expande progresivamente hacia atrás (14, 28, 56, 112, 224 días)
+                      MANTENIENDO el filtro de Navidad, buscando datos pre-Navidad.
 
             Args:
                 df: DataFrame con datos (historicos + predicciones)
                 target_date: Fecha objetivo
-                days_back: Dias hacia atras
+                days_back: Dias hacia atras para la ventana inicial
                 column: Columna a extraer
                 ultimo_historico: Ultimo dia con datos reales (no predicciones)
+
+            Returns:
+                np.array: Valores históricos encontrados (excluyendo época navideña)
             """
             # FILTRO CRITICO: Solo datos historicos reales (nunca usar predicciones)
             if ultimo_historico is not None:
@@ -840,19 +846,40 @@ class ForecastPipeline:
             valores = df.loc[mask, column].values
 
             # Si después de excluir época navideña no quedan suficientes valores,
-            # expandir la ventana hacia atrás (buscar más días históricos)
-            if len(valores) < max(3, days_back // 2):  # Al menos 3 días o la mitad de la ventana
-                # Expandir ventana hasta tener suficientes datos
-                days_back_extended = days_back * 2  # Duplicar ventana
-                fecha_inicio_extended = fecha_fin - timedelta(days=days_back_extended - 1)
-                mask_extended = (df['fecha'].dt.date >= fecha_inicio_extended.date()) & (df['fecha'].dt.date <= fecha_fin.date())
-                mask_extended = mask_extended & ~epoca_navidena_mask
-                valores = df.loc[mask_extended, column].values
+            # expandir la ventana hacia atrás MANTENIENDO el filtro (buscar datos pre-Navidad)
+            max_expansiones = 5  # Prevenir loops infinitos (224 días máximo)
+            expansion_actual = 0
 
-                # Si aún no hay suficientes, tomar lo que haya (sin filtro de época navideña como último recurso)
-                if len(valores) < 3:
-                    mask_fallback = (df['fecha'].dt.date >= fecha_inicio.date()) & (df['fecha'].dt.date <= fecha_fin.date())
-                    valores = df.loc[mask_fallback, column].values
+            while len(valores) < max(3, days_back // 2) and expansion_actual < max_expansiones:
+                # Expandir ventana progresivamente hacia atrás
+                days_back_extended = days_back * (2 ** (expansion_actual + 1))  # 14, 28, 56, 112, 224 días
+                fecha_inicio_extended = fecha_fin - timedelta(days=days_back_extended - 1)
+
+                mask_extended = (df['fecha'].dt.date >= fecha_inicio_extended.date()) & (df['fecha'].dt.date <= fecha_fin.date())
+                mask_extended = mask_extended & ~epoca_navidena_mask  # MANTENER filtro de Navidad
+
+                valores = df.loc[mask_extended, column].values
+                expansion_actual += 1
+
+                if len(valores) >= max(3, days_back // 2):
+                    logger.info(f"   ✓ Expandido a {days_back_extended} días para evitar época navideña ({len(valores)} valores encontrados)")
+                    break
+
+            # Si después de todas las expansiones NO hay datos (dataset muy corto),
+            # usar promedio histórico completo como fallback
+            if len(valores) < 1:
+                logger.warning(f"   ⚠️ No hay datos históricos suficientes después de filtrar época navideña.")
+                # Usar todos los datos históricos disponibles (sin importar época navideña) como último recurso
+                mask_fallback = (df['fecha'].dt.date <= fecha_fin.date())
+                valores_fallback = df.loc[mask_fallback, column].values
+                if len(valores_fallback) > 0:
+                    # Tomar promedio de datos históricos completos
+                    valores = np.array([np.mean(valores_fallback)])
+                    logger.info(f"   → Usando promedio histórico: {valores[0]:.2f}")
+                else:
+                    # Caso extremo: no hay datos históricos en absoluto
+                    valores = np.array([0])
+                    logger.warning(f"   → No hay datos históricos. Usando 0 como fallback.")
 
             return valores
 
@@ -894,6 +921,13 @@ class ForecastPipeline:
             features['total_rolling_std_28d'] = features['total_rolling_std_14d']
             features['total_rolling_min_28d'] = features['total_rolling_min_14d']
             features['total_rolling_max_28d'] = features['total_rolling_max_14d']
+
+        # Log rolling stats para validación (especialmente útil para debugging enero post-Navidad)
+        if fecha.month == 1 and fecha.day <= 12:
+            logger.info(f"   🔍 Rolling stats para {fecha.strftime('%Y-%m-%d')} (post-Navidad):")
+            logger.info(f"      7d:  {len(ultimos_7)} valores, mean={features['total_rolling_mean_7d']:.2f} MWh")
+            logger.info(f"      14d: {len(ultimos_14)} valores, mean={features['total_rolling_mean_14d']:.2f} MWh")
+            logger.info(f"      28d: {len(ultimos_28)} valores, mean={features['total_rolling_mean_28d']:.2f} MWh")
 
         # ========================================
         # E. FEATURES DE CAMBIO
