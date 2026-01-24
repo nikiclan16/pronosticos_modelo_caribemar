@@ -48,7 +48,7 @@ def regresar_nuevo_csv(ucp):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
         df.to_csv(path, index=False)
-        base_url = "http://localhost:4001"
+        base_url = "https://pronosticos.jmdatalabs.co"
         url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
@@ -58,7 +58,7 @@ def regresar_nuevo_csv(ucp):
         fecha_inicio=df['FECHA'].max()
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
-        base_url = "http://localhost:4001"
+        base_url = "https://pronosticos.jmdatalabs.co"
         url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())
@@ -97,7 +97,7 @@ def req_clima_api(ucp):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
         df.to_csv(path, index=False)
-        base_url = "http://localhost:4001"
+        base_url = "https://pronosticos.jmdatalabs.co"
         url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
@@ -107,7 +107,7 @@ def req_clima_api(ucp):
         fecha_inicio=df['fecha'].max()
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
-        base_url = "http://localhost:4001"
+        base_url = "https://pronosticos.jmdatalabs.co"
         url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())
