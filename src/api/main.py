@@ -480,6 +480,27 @@ class SingleDayAdjustments(BaseModel):
     referencia: Optional[AdjustedComparison] = None
 
 
+class ScaledHistoricalProfile(BaseModel):
+    """Perfil histórico escalado para igualar el total de la predicción"""
+    profile: Dict[str, float] = Field(..., description="Perfil escalado P1..P24")
+    scale_factor: float = Field(..., description="Factor aplicado al histórico")
+    total_pred: float = Field(..., description="Total de la predicción")
+    total_hist: float = Field(..., description="Total original del histórico")
+
+
+class SingleDayScaledResponse(BaseModel):
+    """Respuesta para perfil histórico escalado al total de la predicción"""
+    prediction: PredictResponse = Field(..., description="Resultado de la predicción para el día solicitado")
+    history: Dict[str, HistoricalDay] = Field(
+        default_factory=dict,
+        description="Historial: día de referencia solicitado si existe"
+    )
+    scaled: Optional[ScaledHistoricalProfile] = Field(
+        None,
+        description="Perfil histórico escalado al total de la predicción"
+    )
+
+
 class SingleDayPredictResponse(BaseModel):
     """Respuesta para predicción de un solo día con historial relacionado"""
     prediction: PredictResponse = Field(..., description="Resultado de la predicción para el día solicitado")
@@ -2047,6 +2068,87 @@ async def predict_single_day(request: SingleDayPredictRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generando predicción de un día: {str(e)}"
+        )
+
+
+@app.post("/predict-day-scaled", response_model=SingleDayScaledResponse, status_code=status.HTTP_200_OK)
+async def predict_single_day_scaled(request: SingleDayPredictRequest):
+    """
+    Endpoint para escalar el histórico (fecha_referencia) al total de la predicción del día solicitado.
+    Retorna el factor de escala y el perfil histórico escalado.
+    """
+    try:
+        target_dt = datetime.strptime(request.fecha, '%Y-%m-%d')
+        derived_end_date = (target_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        reference_dt = datetime.strptime(request.fecha_referencia, '%Y-%m-%d')
+
+        predict_payload = PredictRequest(
+            ucp=request.ucp,
+            end_date=derived_end_date,
+            n_days=1,
+            force_retrain=request.force_retrain,
+            offset_scalar=request.offset_scalar
+        )
+
+        logger.info(
+            f"🎯 Predicción de un día (escalado histórico): {request.fecha} "
+            f"(end_date derivado: {derived_end_date})"
+        )
+        prediction_response = await run_predict_flow(predict_payload)
+
+        reference_date = reference_dt.strftime('%Y-%m-%d')
+        history: Dict[str, HistoricalDay] = {}
+
+        ref_profile = _get_historical_day_profile(request.ucp, reference_date)
+        if ref_profile:
+            history["referencia"] = ref_profile
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No hay histórico para fecha_referencia {reference_date}"
+            )
+
+        if not prediction_response.predictions:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No se generó predicción para el día solicitado"
+            )
+
+        pred_day_dict = prediction_response.predictions[0].model_dump()
+        period_cols = [f"P{i}" for i in range(1, 25)]
+        pred_total = sum(float(pred_day_dict.get(k, 0.0)) for k in period_cols)
+
+        hist_total = sum(float(ref_profile.valores.get(k, 0.0)) for k in period_cols)
+        if hist_total <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El total del histórico es 0; no se puede calcular el factor de escala"
+            )
+
+        scale_factor = pred_total / hist_total
+        scaled_profile = {
+            k: float(ref_profile.valores.get(k, 0.0)) * scale_factor
+            for k in period_cols
+        }
+
+        return SingleDayScaledResponse(
+            prediction=prediction_response,
+            history=history,
+            scaled=ScaledHistoricalProfile(
+                profile=scaled_profile,
+                scale_factor=scale_factor,
+                total_pred=pred_total,
+                total_hist=hist_total
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en /predict-day-scaled: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando perfil escalado: {str(e)}"
         )
 
 
