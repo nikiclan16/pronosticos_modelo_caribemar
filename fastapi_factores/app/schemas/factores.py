@@ -58,3 +58,57 @@ class MarcarMedidaIn(BaseModel):
     mc: Optional[str] = None
     e_ar: Optional[str] = None
     barra: str
+
+
+# --- Cálculos: curvas típicas, FDA, FDP ---
+
+
+class CurvaTipicaRef(BaseModel):
+    """Referencia a una curva (barra + fecha) para FDA/FDP."""
+    barra: str
+    fecha: str
+
+
+class ClusteringRequest(BaseModel):
+    """Request para clustering por barra (agregar factores y agrupar)."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    barra: str
+    flujo_tipo: str  # 'A' | 'R'
+    tipo_dia: Optional[str] = None
+
+
+class CurvasTipicasRequest(BaseModel):
+    """Request para obtener las N curvas más típicas del histórico (forma y nivel)."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    flujo_tipo: str  # 'A' | 'R'
+    n_max: int = Field(8, ge=1, le=100, description="Máximo de curvas típicas a devolver")
+    barra: Optional[str] = None  # si se da, solo curvas de esa barra; si no, todas las barras del MC
+
+
+class CalculoFDARequest(BaseModel):
+    """Request para FDA: se calcula solo sobre las curvas típicas indicadas."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    curvas_tipicas: List[CurvaTipicaRef] = Field(
+        ...,
+        description="Curvas seleccionadas (salida de curvas-tipicas). FDA se calcula solo sobre estas."
+    )
+
+
+class CalculoFDPRequest(BaseModel):
+    """Request para FDP: se calcula solo sobre las curvas típicas indicadas."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    curvas_tipicas: List[CurvaTipicaRef] = Field(
+        ...,
+        description="Curvas seleccionadas (salida de curvas-tipicas). FDP se calcula solo sobre estas."
+    )
