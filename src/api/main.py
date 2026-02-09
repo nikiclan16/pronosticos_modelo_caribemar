@@ -700,11 +700,11 @@ async def analyze_error_with_openai(
 
     Args:
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
-        error_type: Tipo de error ('mensual', 'consecutivo', 'ambos')
+        error_type: Tipo de error ('mensual', 'consecutivo', 'unico', 'ambos')
         mape_total: MAPE mensual calculado
         fecha_inicio: Fecha inicio del periodo analizado
         fecha_fin: Fecha fin del periodo analizado
-        dias_consecutivos: Lista de fechas con errores consecutivos > 5%
+        dias_consecutivos: Lista de fechas con errores > 5%
 
     Returns:
         str: Análisis detallado de OpenAI sobre posibles causas
@@ -766,6 +766,30 @@ Considera:
 - Temporadas vacacionales o escolares
 - Restricciones energéticas o racionamientos
 - Crecimiento poblacional o cambios demográficos
+- cualquier otro acontecimiento relevante
+
+Proporciona un análisis conciso (máximo 2-3 oraciones) con las causas más probables encontradas."""
+
+        elif error_type == 'unico':
+            dias_str = ', '.join(dias_consecutivos) if dias_consecutivos else 'día específico'
+            prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de una anomalía en la demanda energética.
+
+**Contexto:**
+- UCP: {ucp}, Colombia
+- Fechas afectadas: {dias_str}
+- Tipo de anomalía: Un día con error de predicción superior al 5%
+- Periodo analizado: {fecha_inicio} a {fecha_fin}
+
+**Tarea:**
+Busca en internet eventos, acontecimientos o situaciones que pudieron haber ocurrido en {ucp}, Colombia en la fecha {dias_str} que pudieron causar variaciones significativas en la demanda de energía eléctrica.
+
+Considera:
+- Eventos climáticos extremos (tormentas, olas de calor/frío)
+- Eventos públicos masivos (conciertos, partidos, festivales)
+- Días festivos locales o nacionales
+- Apagones o fallas en el suministro
+- Eventos políticos o sociales
+- Paros o manifestaciones
 - cualquier otro acontecimiento relevante
 
 Proporciona un análisis conciso (máximo 2-3 oraciones) con las causas más probables encontradas."""
@@ -1249,9 +1273,12 @@ async def predict_demand(request: ReasonRequest):
             # Condición: error mayor al 5%
             cond = df_merged['abs_pct_error'] > 5
             print(cond)
+            # Detectar si hay al menos un día con error > 5%
+            hay_un_dia = cond.any()
             # Detectar si hay dos True consecutivos
             hay_dos_seguidos = (cond & cond.shift(1)).any()
 
+            print("¿Hay al menos un error > 5%?:", hay_un_dia)
             print("¿Hay dos errores seguidos > 5%?:", hay_dos_seguidos)
             
             mape_total = df_merged['abs_pct_error'].mean()
@@ -1275,6 +1302,11 @@ async def predict_demand(request: ReasonRequest):
                 error_type = 'consecutivo'
                 reason_base = f'Dos días consecutivos con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
                 logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif hay_un_dia:
+                should_retrain = True
+                error_type = 'unico'
+                reason_base = f'Un día con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
             elif mape_total > 5:
                 should_retrain = True
                 error_type = 'mensual'
@@ -1292,7 +1324,7 @@ async def predict_demand(request: ReasonRequest):
                 logger.info("🔍 ANALIZANDO CAUSAS DEL ERROR CON OPENAI")
                 logger.info("="*80)
 
-                # Extraer fechas de días con errores consecutivos si aplica
+                # Extraer fechas de días con errores si aplica
                 dias_consecutivos = None
                 if error_type in ['consecutivo', 'ambos']:
                     # Encontrar los días consecutivos con error > 5%
@@ -1323,6 +1355,21 @@ async def predict_demand(request: ReasonRequest):
                                 dias_consecutivos = fechas_consecutivas
 
                     logger.info(f"  Días consecutivos identificados: {dias_consecutivos}")
+
+                elif error_type == 'unico':
+                    # Encontrar los días con error > 5% (no consecutivos)
+                    indices_error = df_merged.index[cond].tolist()
+
+                    if len(indices_error) > 0:
+                        dias_consecutivos = []
+                        for idx in indices_error:
+                            fecha_val = df_merged.loc[idx, 'FECHA']
+                            if isinstance(fecha_val, pd.Timestamp):
+                                dias_consecutivos.append(fecha_val.strftime('%Y-%m-%d'))
+                            else:
+                                dias_consecutivos.append(str(fecha_val))
+
+                    logger.info(f"  Días con error > 5% identificados: {dias_consecutivos}")
 
                 # Obtener rango de fechas del análisis
                 fecha_min = df_merged['FECHA'].min()
@@ -1592,9 +1639,12 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
             # Condición: error mayor al 5%
             cond = df_merged['abs_pct_error'] > 5
             print(cond)
+            # Detectar si hay al menos un día con error > 5%
+            hay_un_dia = cond.any()
             # Detectar si hay dos True consecutivos
             hay_dos_seguidos = (cond & cond.shift(1)).any()
 
+            print("¿Hay al menos un error > 5%?:", hay_un_dia)
             print("¿Hay dos errores seguidos > 5%?:", hay_dos_seguidos)
             
             mape_total = df_merged['abs_pct_error'].mean()
@@ -1618,6 +1668,11 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
                 error_type = 'consecutivo'
                 reason_base = f'Dos días consecutivos con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
                 logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif hay_un_dia:
+                should_retrain = True
+                error_type = 'unico'
+                reason_base = f'Un día con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
             elif mape_total > 5:
                 should_retrain = True
                 error_type = 'mensual'
@@ -1635,7 +1690,7 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
                 logger.info("🔍 ANALIZANDO CAUSAS DEL ERROR CON OPENAI")
                 logger.info("="*80)
 
-                # Extraer fechas de días con errores consecutivos si aplica
+                # Extraer fechas de días con errores si aplica
                 dias_consecutivos = None
                 if error_type in ['consecutivo', 'ambos']:
                     # Encontrar los días consecutivos con error > 5%
@@ -1666,6 +1721,21 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
                                 dias_consecutivos = fechas_consecutivas
 
                     logger.info(f"  Días consecutivos identificados: {dias_consecutivos}")
+
+                elif error_type == 'unico':
+                    # Encontrar los días con error > 5% (no consecutivos)
+                    indices_error = df_merged.index[cond].tolist()
+
+                    if len(indices_error) > 0:
+                        dias_consecutivos = []
+                        for idx in indices_error:
+                            fecha_val = df_merged.loc[idx, 'FECHA']
+                            if isinstance(fecha_val, pd.Timestamp):
+                                dias_consecutivos.append(fecha_val.strftime('%Y-%m-%d'))
+                            else:
+                                dias_consecutivos.append(str(fecha_val))
+
+                    logger.info(f"  Días con error > 5% identificados: {dias_consecutivos}")
 
                 # Obtener rango de fechas del análisis
                 fecha_min = df_merged['FECHA'].min()
