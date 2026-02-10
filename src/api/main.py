@@ -71,8 +71,52 @@ class EventsRequest(BaseModel):
 
 class EventsResponse(BaseModel):
     """Schema para respuesta de eventos futuros"""
-    
+
     events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
+
+
+class DeviationItem(BaseModel):
+    """Schema para un desvío individual"""
+    fecha: str = Field(..., description="Fecha del desvío (formato: YYYY-MM-DD)")
+    mape: float = Field(..., description="MAPE del desvío (positivo o negativo, en porcentaje)")
+
+    @field_validator('fecha')
+    @classmethod
+    def validate_fecha_format(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+
+
+class AnalyzeDeviationRequest(BaseModel):
+    """Schema para solicitud de análisis de desvíos"""
+    ucp: str = Field(
+        ...,
+        description="UCP a analizar (ej: 'Atlantico', 'Oriente', 'Antioquia')"
+    )
+    desvios: List[DeviationItem] = Field(
+        ...,
+        description="Lista de desvíos a analizar (fecha y MAPE)",
+        min_length=1
+    )
+
+
+class DeviationAnalysisItem(BaseModel):
+    """Schema para el análisis de un desvío individual"""
+    fecha: str = Field(..., description="Fecha del desvío")
+    mape: float = Field(..., description="MAPE reportado")
+    analisis: str = Field(..., description="Análisis de posibles causas del desvío")
+
+
+class AnalyzeDeviationResponse(BaseModel):
+    """Schema para respuesta de análisis de desvíos"""
+    ucp: str = Field(..., description="UCP analizado")
+    total_desvios: int = Field(..., description="Número total de desvíos analizados")
+    resultados: List[DeviationAnalysisItem] = Field(..., description="Análisis detallado por cada desvío")
+    resumen_general: str = Field(..., description="Resumen general de los desvíos y patrones identificados")
+
 
 class BaseCurveRequest(BaseModel):
     """Schema para solicitud de curva base"""
@@ -2302,6 +2346,170 @@ async def get_events(request: EventsRequest):
     except Exception as e:
         logger.warning(f"⚠ Error obteniendo eventos futuros: {e}")
         events = {}
+
+
+async def analyze_deviation_with_openai(
+    ucp: str,
+    fecha: str,
+    mape: float
+) -> str:
+    """
+    Analiza las posibles causas de un desvío específico usando OpenAI con búsqueda en internet
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        fecha: Fecha del desvío (YYYY-MM-DD)
+        mape: MAPE del desvío (puede ser positivo o negativo)
+
+    Returns:
+        str: Análisis detallado de OpenAI sobre posibles causas
+    """
+    try:
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            logger.warning("⚠ API_KEY no encontrada en .env, saltando análisis de OpenAI")
+            return "Análisis no disponible (API_KEY no configurada)"
+
+        client = OpenAI(api_key=api_key)
+
+        # Determinar si fue sobreestimación o subestimación
+        if mape > 0:
+            tipo_desvio = "subestimación (demanda real mayor a la predicha)"
+        else:
+            tipo_desvio = "sobreestimación (demanda real menor a la predicha)"
+
+        prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de un desvío en la predicción de demanda energética.
+
+**Contexto:**
+- UCP: {ucp}, Colombia
+- Fecha del desvío: {fecha}
+- Magnitud del error: {abs(mape):.2f}%
+- Tipo de desvío: {tipo_desvio}
+
+**Tarea:**
+Busca en internet eventos, acontecimientos o situaciones que ocurrieron en {ucp}, Colombia en la fecha {fecha} o días cercanos que pudieron causar este desvío en la demanda de energía eléctrica.
+
+Considera:
+- Eventos climáticos (tormentas, olas de calor/frío, lluvias intensas)
+- Eventos públicos masivos (conciertos, partidos de fútbol, festivales)
+- Días festivos locales o nacionales
+- Apagones o fallas en el suministro eléctrico
+- Eventos políticos o sociales (paros, manifestaciones)
+- Cambios en actividad industrial o comercial
+- Cualquier otro acontecimiento relevante
+
+Proporciona un análisis conciso (máximo 2-3 oraciones) explicando las causas más probables encontradas."""
+
+        logger.info(f"🤖 Consultando OpenAI para análisis de desvío en {fecha}...")
+
+        response = await run_in_threadpool(
+            lambda: client.responses.create(
+                model="gpt-5-mini",
+                input=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                tools=[
+                    {
+                        "type": "web_search"
+                    }
+                ]
+            )
+        )
+
+        analysis = response.output_text.strip()
+        logger.info(f"✓ Análisis recibido para {fecha}: {len(analysis)} caracteres")
+
+        return analysis
+
+    except Exception as e:
+        logger.error(f"Error en análisis de OpenAI para {fecha}: {e}")
+        return f"Análisis no disponible (error: {str(e)})"
+
+
+@app.post('/analyze-deviation', response_model=AnalyzeDeviationResponse, status_code=status.HTTP_200_OK)
+async def analyze_deviation(request: AnalyzeDeviationRequest):
+    """
+    Analiza desvíos de predicción y busca eventos que pudieron causarlos.
+
+    Recibe una lista de desvíos (fecha, MAPE) y consulta OpenAI para identificar
+    eventos o situaciones que pudieron causar cada desvío.
+    """
+    logger.info("="*80)
+    logger.info(f"🔍 ANALIZANDO DESVÍOS PARA {request.ucp}")
+    logger.info(f"   Total de desvíos a analizar: {len(request.desvios)}")
+    logger.info("="*80)
+
+    try:
+        resultados = []
+
+        for i, desvio in enumerate(request.desvios, 1):
+            logger.info(f"\n📊 Analizando desvío {i}/{len(request.desvios)}: {desvio.fecha} (MAPE: {desvio.mape:+.2f}%)")
+
+            analisis = await analyze_deviation_with_openai(
+                ucp=request.ucp,
+                fecha=desvio.fecha,
+                mape=desvio.mape
+            )
+
+            resultados.append(DeviationAnalysisItem(
+                fecha=desvio.fecha,
+                mape=desvio.mape,
+                analisis=analisis
+            ))
+
+        # Generar resumen general si hay múltiples desvíos
+        if len(request.desvios) > 1:
+            fechas_str = ", ".join([d.fecha for d in request.desvios])
+            mapes_str = ", ".join([f"{d.mape:+.2f}%" for d in request.desvios])
+
+            resumen_prompt = f"""Basándote en los siguientes desvíos de predicción de demanda energética en {request.ucp}, Colombia, proporciona un breve resumen (2-3 oraciones) identificando patrones comunes o tendencias:
+
+Fechas: {fechas_str}
+MAPEs: {mapes_str}
+
+Análisis individuales:
+{chr(10).join([f"- {r.fecha}: {r.analisis}" for r in resultados])}
+
+Resume los patrones o causas comunes identificadas."""
+
+            try:
+                api_key = os.getenv('API_KEY')
+                if api_key:
+                    client = OpenAI(api_key=api_key)
+                    response = await run_in_threadpool(
+                        lambda: client.responses.create(
+                            model="gpt-5-mini",
+                            input=[{"role": "user", "content": resumen_prompt}]
+                        )
+                    )
+                    resumen_general = response.output_text.strip()
+                else:
+                    resumen_general = "Resumen no disponible (API_KEY no configurada)"
+            except Exception as e:
+                resumen_general = f"Resumen no disponible (error: {str(e)})"
+        else:
+            resumen_general = resultados[0].analisis if resultados else "Sin análisis disponible"
+
+        logger.info(f"\n✓ Análisis completado para {len(resultados)} desvíos")
+
+        return AnalyzeDeviationResponse(
+            ucp=request.ucp,
+            total_desvios=len(resultados),
+            resultados=resultados,
+            resumen_general=resumen_general
+        )
+
+    except Exception as e:
+        logger.error(f"Error analizando desvíos: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error analizando desvíos: {str(e)}"
+        )
+
 
 def calculate_base_curves(
     ucp: str,
