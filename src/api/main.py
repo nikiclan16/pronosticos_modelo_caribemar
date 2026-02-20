@@ -2114,10 +2114,7 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
                 detail="No se generó predicción para el día solicitado"
             )
 
-        pred_day_dict = prediction_response.predictions[0].model_dump()
         period_cols = [f"P{i}" for i in range(1, 25)]
-        pred_total = sum(float(pred_day_dict.get(k, 0.0)) for k in period_cols)
-
         hist_total = sum(float(ref_profile.valores.get(k, 0.0)) for k in period_cols)
         if hist_total <= 0:
             raise HTTPException(
@@ -2125,11 +2122,13 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
                 detail="El total del histórico es 0; no se puede calcular el factor de escala"
             )
 
-        scale_factor = pred_total / hist_total
+        # Ajuste fijo: aumentar el histórico en 2%
+        scale_factor = 1.02
         scaled_profile = {
             k: float(ref_profile.valores.get(k, 0.0)) * scale_factor
             for k in period_cols
         }
+        total_scaled = hist_total * scale_factor
 
         return SingleDayScaledResponse(
             prediction=prediction_response,
@@ -2137,7 +2136,7 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
             scaled=ScaledHistoricalProfile(
                 profile=scaled_profile,
                 scale_factor=scale_factor,
-                total_pred=pred_total,
+                total_pred=total_scaled,
                 total_hist=hist_total
             )
         )
