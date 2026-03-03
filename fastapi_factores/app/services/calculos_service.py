@@ -445,13 +445,14 @@ def calcular_fda_para_tipo_dia(
 
     df = pd.DataFrame(df_list)
 
-    # Calcular sumas por periodo antes de normalizar (para el ajuste)
-    sumas_por_periodo = df[PERIODOS_COLUMNAS].sum()
-    ajustes_por_periodo = 1.0 - sumas_por_periodo
-    ajuste_promedio = ajustes_por_periodo.mean()  # Para el campo ajuste_aplicado en respuesta
-
     # Aplicar normalización FDA
     df_normalizado = _calcular_fda_normalizado(df)
+
+    # Calcular ajuste real aplicado (diferencia entre suma normalizada y 1.0)
+    # Este valor debería ser muy cercano a 0 después de la normalización
+    sumas_finales = df_normalizado[PERIODOS_COLUMNAS].sum()
+    ajustes_reales = (1.0 - sumas_finales).abs()
+    ajuste_promedio = ajustes_reales.mean()  # Promedio de ajustes por período
 
     # Agregar barra y fecha de vuelta
     df_normalizado['barra'] = df['barra'].values
