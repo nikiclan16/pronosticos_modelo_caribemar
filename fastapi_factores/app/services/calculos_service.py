@@ -59,6 +59,49 @@ def _curvas_a_matriz(curvas: List[Dict[str, Any]]) -> Tuple[np.ndarray, List[Tup
     return np.array(filas), keys
 
 
+def _filtrar_outliers_iqr(curvas: List[Dict[str, Any]], factor_iqr: float = 1.5) -> List[Dict[str, Any]]:
+    """
+    Filtra curvas que tienen valores outliers usando el método IQR.
+
+    Una curva se descarta si tiene AL MENOS UN período fuera de los límites:
+    - lower = Q1 - factor_iqr * IQR
+    - upper = Q3 + factor_iqr * IQR
+
+    Args:
+        curvas: Lista de curvas con periodos p1-p24
+        factor_iqr: Multiplicador del IQR (default 1.5)
+
+    Returns:
+        Lista de curvas sin outliers
+    """
+    if not curvas or len(curvas) < 4:
+        return curvas
+
+    X, keys = _curvas_a_matriz(curvas)
+    n_curvas, n_periodos = X.shape
+
+    # Calcular Q1, Q3, IQR para cada período
+    q1 = np.percentile(X, 25, axis=0)
+    q3 = np.percentile(X, 75, axis=0)
+    iqr = q3 - q1
+
+    lower = q1 - factor_iqr * iqr
+    upper = q3 + factor_iqr * iqr
+
+    # Identificar curvas válidas (ningún período fuera de límites)
+    curvas_validas = []
+    for i in range(n_curvas):
+        es_outlier = False
+        for j in range(n_periodos):
+            if X[i, j] < lower[j] or X[i, j] > upper[j]:
+                es_outlier = True
+                break
+        if not es_outlier:
+            curvas_validas.append(curvas[i])
+
+    return curvas_validas
+
+
 def _seleccionar_curvas_tipicas(
     curvas: List[Dict[str, Any]], n_max: int
 ) -> List[Dict[str, Any]]:
@@ -66,13 +109,21 @@ def _seleccionar_curvas_tipicas(
     De una lista de curvas (barra, fecha, periodos), devuelve hasta n_max más típicas
     por forma y nivel: normaliza L2, mide centralidad (menor distancia media = más típica).
     Si hay menos de n_max curvas, devuelve todas las encontradas.
+
+    IMPORTANTE: Primero filtra outliers usando IQR antes de calcular tipicidad.
     """
     if not curvas:
         return []
-    if len(curvas) <= n_max:
-        return curvas
 
-    X, keys = _curvas_a_matriz(curvas)
+    # Paso 1: Filtrar outliers por IQR
+    curvas_filtradas = _filtrar_outliers_iqr(curvas)
+
+    if not curvas_filtradas:
+        return []
+    if len(curvas_filtradas) <= n_max:
+        return curvas_filtradas
+
+    X, keys = _curvas_a_matriz(curvas_filtradas)
     # Normalizar por L2 para que forma y nivel relativo cuenten
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
@@ -87,7 +138,7 @@ def _seleccionar_curvas_tipicas(
 
     # Más típicas = menor distancia media (más centrales)
     indices = np.argsort(mean_dists)[:n_max]
-    return [curvas[i] for i in indices]
+    return [curvas_filtradas[i] for i in indices]
 
 
 # =============================================================================
