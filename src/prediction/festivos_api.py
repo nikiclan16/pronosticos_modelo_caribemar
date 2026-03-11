@@ -23,7 +23,7 @@ class FestivosAPIClient:
     (ForecastPipeline, CalendarClassifier) durante la ejecución actual.
     """
     
-    BASE_URL = "https://pronosticos.jmdatalabs.co/api/v1/admin/dashboard/configuracion/listarFestivos"
+    BASE_URL = "https://pronosticos.jmdatalabs.co/api/v1/admin/configuracion-interna/listarFestivos"
     
     def __init__(self, base_url: Optional[str] = None):
         """
