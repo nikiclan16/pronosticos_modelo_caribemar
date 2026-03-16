@@ -1083,7 +1083,7 @@ def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: s
         models_ucp_dir = Path(f'models/{ucp}')
         models_ucp_dir.mkdir(parents=True, exist_ok=True)
 
-        engine = HourlyDisaggregationEngine(auto_load=False)
+        engine = HourlyDisaggregationEngine(auto_load=False, ucp=ucp)
 
         # Normalizar nombre de columna de fecha
         df_temp = df_with_features.copy()
@@ -2581,14 +2581,15 @@ def calculate_base_curves(
         )
     
     # Inicializar componentes
-    calendar_classifier = CalendarClassifier()
-    
+    calendar_classifier = CalendarClassifier(ucp=ucp)
+
     # Cargar motor de desagregación horaria (para días normales)
     try:
         models_dir = Path(f'models/{ucp}') if Path(f'models/{ucp}').exists() else Path('models')
         hourly_engine = HourlyDisaggregationEngine(
             auto_load=True,
-            models_dir=str(models_dir)
+            models_dir=str(models_dir),
+            ucp=ucp
         )
         logger.info(f"✓ Motor de desagregación horaria cargado")
     except Exception as e:

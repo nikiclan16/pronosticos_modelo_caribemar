@@ -59,6 +59,7 @@ class FestivosAPIClient:
         
         try:
             logger.debug(f"Solicitando festivos desde API: {url}")
+            print(f"[FESTIVOS] Request → {url}")
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             
