@@ -283,7 +283,8 @@ def aplicar_clustering(
     mc: str,
     barra: str,
     flujo_tipo: str,
-    tipo_dia: str = ""
+    tipo_dia: str = "",
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Aplica factores multiplicadores a medidas y agrupa por barra+fecha.
@@ -303,21 +304,21 @@ def aplicar_clustering(
         Lista de medidas clusterizadas por fecha
     """
     # Obtener códigos RPM de la barra
-    codigos = factores_service.consultar_barra_nombre(barra)
+    codigos = factores_service.consultar_barra_nombre(barra, dsn=dsn)
     if not codigos:
         return []
 
     codigo_rpm = [row['codigo_rpm'] for row in codigos]
 
     # Obtener factores
-    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm)
+    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm, dsn=dsn)
     if not factores:
         return []
 
     # Obtener medidas
     flujos = [f['flujo'] for f in factores]
     medidas = factores_service.consultar_medidas_calcular_completo(
-        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False
+        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False, dsn=dsn
     )
 
     if not medidas:
@@ -371,6 +372,7 @@ def obtener_curvas_tipicas(
     flujo_tipo: str,
     n_max: int,
     barra: Optional[str] = None,
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Obtiene las N curvas más típicas del histórico (por forma y nivel).
@@ -388,7 +390,7 @@ def obtener_curvas_tipicas(
     if barra:
         barras_a_usar = [{"barra": barra}]
     else:
-        barras_a_usar = factores_service.consultar_barras_index_xmc(mc)
+        barras_a_usar = factores_service.consultar_barras_index_xmc(mc, dsn=dsn)
         if not barras_a_usar:
             return []
 
@@ -398,7 +400,7 @@ def obtener_curvas_tipicas(
         if not nombre_barra:
             continue
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia
+            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia, dsn=dsn
         )
         for m in medidas:
             curvas_todas.append({
@@ -435,6 +437,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
     flujo_tipo: str,
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Obtiene medidas clusterizadas solo para las (barra, fecha) indicadas en curvas_tipicas.
@@ -445,7 +448,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     todas = []
     for barra in barras_unicas:
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia
+            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia, dsn=dsn
         )
         todas.extend(medidas)
     return _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
@@ -457,6 +460,7 @@ def calcular_fda_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Calcula FDA (Factor de Demanda Ajustada) solo sobre las curvas típicas indicadas.
@@ -470,12 +474,13 @@ def calcular_fda_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha} (salida de curvas-tipicas). FDA se calcula solo sobre estas.
+        dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDA normalizados
     """
     medidas_clusterizadas = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
     )
 
     if not medidas_clusterizadas:
@@ -523,6 +528,7 @@ def calcular_fdp_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Calcula FDP (Factor de Demanda Pronóstico) solo sobre las curvas típicas indicadas.
@@ -537,15 +543,16 @@ def calcular_fdp_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha}. FDP se calcula solo sobre estas.
+        dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDP calculados
     """
     medidas_a = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
     )
     medidas_r = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R", dsn=dsn
     )
 
     if not medidas_a or not medidas_r:

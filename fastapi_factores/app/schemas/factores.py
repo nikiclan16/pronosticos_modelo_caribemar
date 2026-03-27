@@ -77,6 +77,7 @@ class ClusteringRequest(BaseModel):
     barra: str
     flujo_tipo: str  # 'A' | 'R'
     tipo_dia: Optional[str] = None
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
 class CurvasTipicasRequest(BaseModel):
@@ -88,6 +89,7 @@ class CurvasTipicasRequest(BaseModel):
     flujo_tipo: str  # 'A' | 'R'
     n_max: int = Field(8, ge=1, le=100, description="Máximo de curvas típicas a devolver")
     barra: Optional[str] = None  # si se da, solo curvas de esa barra; si no, todas las barras del MC
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
 class CalculoFDARequest(BaseModel):
@@ -100,6 +102,7 @@ class CalculoFDARequest(BaseModel):
         ...,
         description="Curvas seleccionadas (salida de curvas-tipicas). FDA se calcula solo sobre estas."
     )
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
 class CalculoFDPRequest(BaseModel):
@@ -112,3 +115,4 @@ class CalculoFDPRequest(BaseModel):
         ...,
         description="Curvas seleccionadas (salida de curvas-tipicas). FDP se calcula solo sobre estas."
     )
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
