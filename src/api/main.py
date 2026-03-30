@@ -2158,6 +2158,7 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
                 detail="No se generó predicción para el día solicitado"
             )
 
+        pred_day_dict = prediction_response.predictions[0].model_dump()
         period_cols = [f"P{i}" for i in range(1, 25)]
         hist_total = sum(float(ref_profile.valores.get(k, 0.0)) for k in period_cols)
         if hist_total <= 0:
@@ -2166,13 +2167,25 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
                 detail="El total del histórico es 0; no se puede calcular el factor de escala"
             )
 
-        # Ajuste fijo: aumentar el histórico en 2%
-        scale_factor = 1.02
-        scaled_profile = {
-            k: float(ref_profile.valores.get(k, 0.0)) * scale_factor
-            for k in period_cols
-        }
-        total_scaled = hist_total * scale_factor
+        target_factor = 0.05
+        scaled_profile = {}
+        total_scaled = 0.0
+        for key in period_cols:
+            hist_val = float(ref_profile.valores.get(key, 0.0))
+            pred_val = float(pred_day_dict.get(key, 0.0))
+            if hist_val <= 0:
+                scaled_val = max(pred_val, 0.0)
+            else:
+                delta = pred_val - hist_val
+                if delta <= 0:
+                    scaled_val = hist_val * 1.01
+                else:
+                    scaled_val = hist_val + target_factor * delta
+            scaled_profile[key] = scaled_val
+            total_scaled += scaled_val
+
+        scale_factor = total_scaled / hist_total
+        pred_total = sum(float(pred_day_dict.get(k, 0.0)) for k in period_cols)
 
         return SingleDayScaledResponse(
             prediction=prediction_response,
@@ -2180,7 +2193,7 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
             scaled=ScaledHistoricalProfile(
                 profile=scaled_profile,
                 scale_factor=scale_factor,
-                total_pred=total_scaled,
+                total_pred=pred_total,
                 total_hist=hist_total
             )
         )
