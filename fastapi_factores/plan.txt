@@ -1,0 +1,475 @@
+# Plan de Implementación: Cálculos FDA/FDP y Clustering
+
+## Resumen Ejecutivo
+
+Completar la refactorización del módulo de factores migrando los cálculos FDA (Factor de Demanda Ajustada), FDP (Factor de Demanda Pronóstico) y clustering desde el sistema legacy C# ASP.NET a la API FastAPI actual.
+
+**Alcance**: Solo funcionalidad core (FDA/FDP + clustering). Sin reportes ni exportación Excel.
+
+## Contexto
+
+### Sistema Legacy
+- **Ubicación**: `/Legacy/modulofactores.aspx.cs`
+- **Cálculos críticos**:
+  - FDA: Normalización de medidas para que sumen 1.0 (líneas 2102-2312)
+  - FDP: Cálculo trigonométrico `Cos(Atan(Q/P))` (líneas 3124-3147)
+  - Clustering: Aplicación de factores multiplicadores (líneas 1471-1556)
+
+### Estado Actual FastAPI
+- ✅ CRUD completo: barras, agrupaciones, medidas
+- ✅ Queries SQL reutilizables en `factores_service.py`
+- ❌ Falta: Lógica de cálculo FDA/FDP
+
+## Arquitectura de la Solución
+
+### Nuevos Archivos
+
+1. **`app/services/calculos_service.py`** (nuevo)
+   - Lógica de cálculo FDA/FDP separada del CRUD
+   - Funciones auxiliares de normalización y clustering
+   - Reutiliza queries de `factores_service.py`
+
+2. **`app/routes/calculos.py`** (nuevo)
+   - Endpoints REST para FDA, FDP y clustering
+   - Prefix: `/factores/calculos`
+   - Tags: `["calculos"]`
+
+### Archivos a Modificar
+
+3. **`app/schemas/factores.py`**
+   - Agregar schemas Pydantic para request/response
+   - Modelos: `CalculoFDARequest`, `CalculoFDPRequest`, `ClusteringRequest`
+   - Response schemas con estructura por tipo de día
+
+4. **`app/main.py`**
+   - Registrar nuevo router: `app.include_router(calculos_router)`
+
+## Algoritmos a Implementar
+
+### 1. Clustering (Aplicación de Factores)
+
+**Algoritmo Optimizado con pandas**:
+```python
+import pandas as pd
+
+1. Consultar medidas con factores ya multiplicados (nueva query SQL optimizada)
+2. Cargar en DataFrame de pandas
+3. Agrupar por ['barra', 'fecha'] y sumar periodos:
+   df_agrupado = df.groupby(['barra', 'fecha'])[columnas_periodos].sum()
+4. Redondear a 5 decimales: df_agrupado = df_agrupado.round(5)
+5. Convertir a dict/JSON para respuesta
+```
+
+**Ventajas**:
+- SQL hace la multiplicación (más rápido)
+- pandas agrupa eficientemente
+- Código más limpio y mantenible
+
+**Endpoint**: `POST /factores/calculos/clustering`
+
+### 2. FDA (Factor de Demanda Ajustada)
+
+**Algoritmo Optimizado con pandas + numpy** (líneas 2102-2312 legacy):
+```python
+import pandas as pd
+import numpy as np
+
+# Fase 1: Obtener datos clusterizados en DataFrame
+df = pd.DataFrame(consultar_medidas_con_factores_aplicados(...))
+
+# Fase 2: Normalización FDA con pandas
+1. Agrupar por fecha: df_grouped = df.groupby('fecha')
+2. Sumar periodos: sumas = df_grouped[columnas_p].sum()
+3. Calcular promedios: promedios = sumas.mean()
+4. Calcular ajuste: ajuste = 1.0 - promedios.sum()
+5. Encontrar máximos: maximos = sumas.max()
+6. Aplicar ajuste vectorizado:
+   df_ajustado = sumas.apply(lambda row:
+       [max_val + ajuste if val == max_val else val
+        for val, max_val in zip(row, maximos)]
+   )
+7. Redondear: df_ajustado = df_ajustado.round(5)
+8. Validar suma: assert abs(df_ajustado.sum().sum() - 1.0) < 1e-9
+
+# Repetir independientemente para: ORDINARIO, SABADO, FESTIVO
+```
+
+**Ventajas**:
+- Operaciones vectorizadas (100x más rápido en datasets grandes)
+- Código más conciso y legible
+- Validaciones integradas de pandas
+
+**Endpoint**: `POST /factores/calculos/fda`
+
+**Precisión**: `round(valor, 5)` compatible con legacy.
+
+### 3. FDP (Factor de Demanda Pronóstico)
+
+**Algoritmo Optimizado con pandas + numpy** (líneas 3124-3147 legacy):
+```python
+import pandas as pd
+import numpy as np
+
+# Crear query SQL que trae A y R en una sola consulta con UNION
+1. Consultar medidas A y R juntas (nueva query optimizada)
+2. Cargar en DataFrame: df = pd.DataFrame(medidas)
+3. Separar activas y reactivas:
+   df_a = df[df['flujo'].str.startswith('A')]
+   df_r = df[df['flujo'].str.startswith('R')]
+4. Merge por fecha: df_merged = pd.merge(df_a, df_r, on='fecha', suffixes=('_a', '_r'))
+5. Calcular FDP vectorizado para todos los periodos:
+   for i in range(1, 25):
+       P = df_merged[f'p{i}_a']
+       Q = df_merged[f'p{i}_r']
+       df_merged[f'fdp_p{i}'] = np.where(
+           P == 0,
+           np.where(Q == 0, 1.0, 0.0),  # Casos especiales
+           np.cos(np.arctan(Q / P))      # Cálculo normal
+       )
+6. Redondear: df_merged = df_merged.round(5)
+
+# Repetir para: ORDINARIO, SABADO, FESTIVO
+```
+
+**Ventajas**:
+- Una sola query SQL para A y R (más eficiente)
+- numpy.arctan + numpy.cos (vectorizado, ~50x más rápido)
+- numpy.where maneja división por cero elegantemente
+- Código más limpio
+
+**Endpoint**: `POST /factores/calculos/fdp`
+
+**Librerías**: `numpy` (agregar a requirements.txt)
+
+## Estructura de Datos
+
+### Request Schemas
+
+```python
+class ClusteringRequest(BaseModel):
+    fecha_inicial: str  # YYYY-MM-DD
+    fecha_final: str
+    mc: str
+    barra: str
+    flujo_tipo: str  # "A" o "R"
+    tipo_dia: Optional[str] = ""  # ORDINARIO/SABADO/FESTIVO o vacío
+
+class CalculoFDARequest(BaseModel):
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    barra: str
+    codigo_rpm: List[str] = []  # Vacío = todos
+
+class CalculoFDPRequest(BaseModel):
+    # Mismo schema que FDA
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    barra: str
+    codigo_rpm: List[str] = []
+```
+
+### Response Format (JSON)
+
+```json
+{
+  "ok": true,
+  "barra": "ACESCO_1",
+  "mc": "Antioquia",
+  "fecha_inicial": "2025-01-01",
+  "fecha_final": "2025-01-31",
+  "resultados": {
+    "ORDINARIO": {
+      "tipo_dia": "ORDINARIO",
+      "n_registros": 15,
+      "factores": {
+        "RPM001": {
+          "barra": "ACESCO_1",
+          "fecha": "2025-01-15",
+          "periodos": [0.04123, 0.03987, ..., 0.05090]
+        }
+      },
+      "suma_total": 1.0,
+      "ajuste_aplicado": 0.00123
+    },
+    "SABADO": { ... },
+    "FESTIVO": { ... }
+  }
+}
+```
+
+## Funciones Auxiliares Clave
+
+### En `calculos_service.py`
+
+```python
+import pandas as pd
+import numpy as np
+
+# Clustering con pandas
+def _agrupar_medidas_clusterizadas(df: pd.DataFrame) -> pd.DataFrame:
+    """Agrupa por barra+fecha y suma periodos"""
+    columnas_p = [f'p{i}' for i in range(1, 25)]
+    return df.groupby(['barra', 'fecha'])[columnas_p].sum().round(5)
+
+# Normalización FDA con pandas/numpy
+def _calcular_fda_normalizado(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica algoritmo FDA completo usando operaciones vectorizadas"""
+    # Suma y promedios vectorizados
+    sumas = df.sum()
+    promedios = df.mean()
+    ajuste = 1.0 - promedios.sum()
+
+    # Encontrar máximos y aplicar ajuste vectorizado
+    maximos = df.max()
+    df_ajustado = df.apply(lambda row:
+        np.where(row == maximos, maximos + ajuste, row),
+        axis=1
+    )
+    return df_ajustado.round(5)
+
+# FDP con numpy
+def _calcular_fdp_vectorizado(df_a: pd.DataFrame, df_r: pd.DataFrame) -> pd.DataFrame:
+    """Calcula FDP para todos los periodos usando numpy"""
+    df_merged = pd.merge(df_a, df_r, on='fecha', suffixes=('_a', '_r'))
+
+    for i in range(1, 25):
+        P = df_merged[f'p{i}_a'].values
+        Q = df_merged[f'p{i}_r'].values
+
+        # Vectorizado con numpy.where para manejar división por cero
+        df_merged[f'fdp_p{i}'] = np.where(
+            P == 0,
+            np.where(Q == 0, 1.0, 0.0),
+            np.cos(np.arctan(Q / P))
+        )
+
+    return df_merged[[f'fdp_p{i}' for i in range(1, 25)]].round(5)
+
+# Conversión DataFrame ↔ JSON
+def _df_to_response(df: pd.DataFrame, tipo_dia: str) -> Dict:
+    """Convierte DataFrame a estructura de respuesta JSON"""
+    return {
+        "tipo_dia": tipo_dia,
+        "n_registros": len(df),
+        "factores": df.to_dict('index'),
+        "suma_total": round(df.sum().sum(), 5)
+    }
+```
+
+## Queries SQL
+
+### Queries Existentes a Reutilizar
+
+- `consultar_barra_factor_nombre(barra, tipo, codigo_rpm)` - Factores de clustering
+- `consultar_medidas_calcular_completo(...)` - Medidas base
+- `consultar_barra_nombre(barra)` - Códigos RPM de una barra
+
+### Nuevas Queries Optimizadas (en `factores_service.py`)
+
+Crear queries optimizadas que traigan datos ya pre-procesados:
+
+```python
+def consultar_medidas_con_factores_aplicados(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    barra: str,
+    tipo_dia: str,
+    flujo_tipo: str
+) -> List[Dict]:
+    """
+    Query optimizada que trae medidas con factores YA multiplicados usando SQL.
+    Evita procesar en Python, usa el poder de PostgreSQL.
+    """
+    sql = """
+    SELECT
+        b.barra,
+        m.fecha,
+        m.codigo_rpm,
+        m.flujo,
+        a.factor,
+        (m.p1 * a.factor) as p1,
+        (m.p2 * a.factor) as p2,
+        ... hasta p24
+    FROM medidas m
+    INNER JOIN agrupaciones a ON m.codigo_rpm = a.codigo_rpm AND m.flujo = a.flujo
+    INNER JOIN barras b ON a.barra_id = b.id
+    WHERE b.barra = %(barra)s
+      AND m.fecha >= %(fecha_inicial)s
+      AND m.fecha <= %(fecha_final)s
+      AND b.mc = %(mc)s
+      AND SUBSTRING(m.flujo, 1, 1) = %(flujo_tipo)s
+      [filtros de tipo_dia]
+    ORDER BY m.fecha
+    """
+```
+
+**Ventaja**: PostgreSQL hace la multiplicación, Python solo agrega.
+
+## Validaciones Críticas
+
+1. **Rango de fechas**: fecha_final >= fecha_inicial
+2. **Existencia de barra**: Validar con `consultar_barra_nombre()`
+3. **Medidas disponibles**: Validar que existan datos en el rango
+4. **División por cero**: Manejar en FDP cuando P=0
+5. **Suma FDA**: Validar que resultado sume exactamente 1.0 (±1e-9)
+6. **Tipos de flujo válidos**: Validar que la barra tenga medidas del tipo solicitado (A/R)
+
+## Consideraciones Técnicas
+
+### Precisión Numérica
+- Legacy usa `Math.Round(valor, 5)` (C#)
+- Python: `round(valor, 5)`
+- Comparación de floats: usar epsilon `1e-9`
+
+### Performance y Optimización
+- **Usar pandas para manipulación de datos**: Más eficiente y legible
+- **Usar numpy para operaciones vectorizadas**: Cálculos matemáticos más rápidos
+- **Queries SQL optimizadas**: Crear queries específicas que traigan datos ya agrupados cuando sea posible
+- **Sin límite arbitrario de días**: El usuario puede procesar rangos grandes si lo necesita
+- **Caché de factores**: Evitar consultas repetidas para la misma barra
+
+### Manejo de Errores
+```python
+try:
+    validar_datos_calculo_fda(payload)
+    resultados = calcular_fda(...)
+    return {"ok": True, "resultados": resultados}
+except ValueError as e:
+    raise HTTPException(status_code=400, detail=str(e))
+except Exception as e:
+    logger.error(f"Error en cálculo: {e}")
+    raise HTTPException(status_code=500, detail="Error interno")
+```
+
+## Plan de Implementación Paso a Paso
+
+### Fase 1: Setup (20 min)
+1. Crear `app/services/calculos_service.py` con estructura básica
+2. Crear `app/routes/calculos.py` con router vacío
+3. Agregar imports necesarios (`import math`, `from typing import ...`)
+4. Registrar router en `app/main.py`
+
+### Fase 2: Schemas (15 min)
+5. Agregar `ClusteringRequest`, `CalculoFDARequest`, `CalculoFDPRequest` a `factores.py`
+6. Agregar response schemas (opcional, puede usar Dict directamente)
+7. Agregar validaciones con `@validator`
+
+### Fase 3: Clustering (45 min)
+8. Implementar `_aplicar_factores_multiplicadores()`:
+   - Crear diccionario de factores para lookup rápido
+   - Iterar medidas y multiplicar P1-P24 por factor
+   - Redondear a 5 decimales
+9. Implementar `_agrupar_por_barra_fecha()`:
+   - Agrupar por clave `barra_fecha`
+   - Sumar periodos de múltiples RPMs
+10. Implementar `aplicar_clustering()` principal
+11. Crear endpoint `POST /factores/calculos/clustering`
+12. Probar con datos reales
+
+### Fase 4: FDA (90 min)
+13. Implementar `_calcular_suma_periodos()`: sumar todos los P1-P24
+14. Implementar `_encontrar_maximos_por_periodo()`: encontrar max de cada periodo
+15. Implementar `_aplicar_ajuste_a_maximos()`:
+    - Calcular ajuste: `1.0 - suma_promedios`
+    - Sumar ajuste al máximo: `max + ajuste`
+    - Mantener otros valores sin cambio
+16. Implementar `calcular_fda_para_tipo_dia()`:
+    - Aplicar clustering
+    - Normalización
+    - Validar suma = 1.0
+17. Crear endpoint `POST /factores/calculos/fda` que itera sobre 3 tipos de día
+18. Probar con cada tipo de día independientemente
+
+### Fase 5: FDP (60 min)
+19. Implementar `_calcular_fdp_periodo()`:
+    - Fórmula: `math.cos(math.atan(Q/P))`
+    - Manejar división por cero
+    - Redondear a 5 decimales
+20. Implementar `_indexar_por_fecha()` para facilitar lookup
+21. Implementar `calcular_fdp_para_tipo_dia()`:
+    - Consultar medidas tipo A (activa)
+    - Consultar medidas tipo R (reactiva)
+    - Calcular FDP para cada periodo
+22. Crear endpoint `POST /factores/calculos/fdp`
+23. Probar con datos que tengan A y R
+
+### Fase 6: Validaciones (30 min)
+24. Implementar `validar_datos_calculo_fda()`:
+    - Validar fechas
+    - Validar barra existe
+    - Validar medidas disponibles
+25. Agregar try/except en endpoints
+26. Mensajes de error descriptivos
+
+### Fase 7: Testing (60 min)
+27. Tests unitarios de funciones auxiliares
+28. Tests de endpoints con datos reales
+29. Comparar resultados con datos del endpoint externo si es posible
+30. Validar precisión numérica (5 decimales)
+
+### Fase 8: Documentación (20 min)
+31. Docstrings en todas las funciones públicas
+32. Ejemplos en docstrings de endpoints
+33. Actualizar README.md con nuevos endpoints
+
+## Estimación Total
+
+- **Desarrollo**: ~5 horas
+- **Testing**: ~1 hora
+- **Total**: ~6 horas
+
+## Archivos Críticos
+
+### Para Implementación
+- `app/services/calculos_service.py` (nuevo, ~400 líneas)
+- `app/routes/calculos.py` (nuevo, ~100 líneas)
+- `app/schemas/factores.py` (modificar, +80 líneas)
+- `app/main.py` (modificar, +2 líneas)
+
+### Para Referencia
+- `Legacy/modulofactores.aspx.cs` (líneas 1471-1556, 2102-2312, 3124-3147)
+- `Legacy/App_Code/Factores.cs` (queries SQL)
+- `Legacy/DOCUMENTACION_TECNICA.md` (contexto del negocio)
+- `app/services/factores_service.py` (queries a reutilizar)
+
+## Riesgos y Mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|--------|---------|------------|
+| Diferencias numéricas con legacy | Alto | Tests de comparación, redondeo consistente a 5 decimales |
+| División por cero en FDP | Medio | Función específica con casos edge manejados |
+| Performance con rangos grandes | Medio | Límite de 90 días, consultas optimizadas |
+| Medidas faltantes | Bajo | Validaciones pre-cálculo, mensajes claros |
+
+## Criterios de Éxito
+
+1. ✅ Endpoint clustering devuelve medidas ajustadas por factores
+2. ✅ Endpoint FDA devuelve factores que suman exactamente 1.0
+3. ✅ Endpoint FDP calcula Cos(Atan(Q/P)) correctamente
+4. ✅ Los 3 tipos de día se procesan independientemente
+5. ✅ Precisión de 5 decimales mantenida
+6. ✅ Validaciones impiden datos inválidos
+7. ✅ Código documentado y testeado
+
+## Dependencias Adicionales
+
+Agregar a `requirements.txt`:
+```
+pandas>=2.0.0
+numpy>=1.24.0
+```
+
+**Justificación**:
+- pandas: Manipulación eficiente de datos tabulares, groupby optimizado
+- numpy: Operaciones matemáticas vectorizadas, 50-100x más rápido que loops Python
+
+## Notas Importantes
+
+- **Usar pandas/numpy**: Mejor performance, código más limpio y mantenible
+- **Queries SQL optimizadas**: Aprovechar PostgreSQL para pre-procesar datos cuando sea posible
+- **Mantener compatibilidad**: Misma precisión que legacy (5 decimales)
+- **Endpoint externo**: Solo consultar si es útil para validación, no integrar directamente
+- **Código Pythonic**: Aprovechar características modernas de Python 3.10+

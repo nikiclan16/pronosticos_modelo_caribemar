@@ -49,7 +49,7 @@ def regresar_nuevo_csv(ucp):
         df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
         df.to_csv(path, index=False)
         base_url = "https://pronosticos.jmdatalabs.co"
-        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
+        url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
         json_to_csv_power(response.json(),ucp,path)
@@ -59,7 +59,7 @@ def regresar_nuevo_csv(ucp):
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
         base_url = "https://pronosticos.jmdatalabs.co"
-        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
+        url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())
         json_to_csv_power(response.json(),ucp,path)
@@ -98,7 +98,7 @@ def req_clima_api(ucp):
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
         df.to_csv(path, index=False)
         base_url = "https://pronosticos.jmdatalabs.co"
-        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
+        url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
         regresar_nuevo_csv_clima(response.json(),path)
@@ -108,7 +108,7 @@ def req_clima_api(ucp):
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
         base_url = "https://pronosticos.jmdatalabs.co"
-        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
+        url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())
         regresar_nuevo_csv_clima(response.json(),path)

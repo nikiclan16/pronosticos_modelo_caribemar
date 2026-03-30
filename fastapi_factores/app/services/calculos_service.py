@@ -59,6 +59,49 @@ def _curvas_a_matriz(curvas: List[Dict[str, Any]]) -> Tuple[np.ndarray, List[Tup
     return np.array(filas), keys
 
 
+def _filtrar_outliers_iqr(curvas: List[Dict[str, Any]], factor_iqr: float = 1.5) -> List[Dict[str, Any]]:
+    """
+    Filtra curvas que tienen valores outliers usando el método IQR.
+
+    Una curva se descarta si tiene AL MENOS UN período fuera de los límites:
+    - lower = Q1 - factor_iqr * IQR
+    - upper = Q3 + factor_iqr * IQR
+
+    Args:
+        curvas: Lista de curvas con periodos p1-p24
+        factor_iqr: Multiplicador del IQR (default 1.5)
+
+    Returns:
+        Lista de curvas sin outliers
+    """
+    if not curvas or len(curvas) < 4:
+        return curvas
+
+    X, keys = _curvas_a_matriz(curvas)
+    n_curvas, n_periodos = X.shape
+
+    # Calcular Q1, Q3, IQR para cada período
+    q1 = np.percentile(X, 25, axis=0)
+    q3 = np.percentile(X, 75, axis=0)
+    iqr = q3 - q1
+
+    lower = q1 - factor_iqr * iqr
+    upper = q3 + factor_iqr * iqr
+
+    # Identificar curvas válidas (ningún período fuera de límites)
+    curvas_validas = []
+    for i in range(n_curvas):
+        es_outlier = False
+        for j in range(n_periodos):
+            if X[i, j] < lower[j] or X[i, j] > upper[j]:
+                es_outlier = True
+                break
+        if not es_outlier:
+            curvas_validas.append(curvas[i])
+
+    return curvas_validas
+
+
 def _seleccionar_curvas_tipicas(
     curvas: List[Dict[str, Any]], n_max: int
 ) -> List[Dict[str, Any]]:
@@ -66,13 +109,21 @@ def _seleccionar_curvas_tipicas(
     De una lista de curvas (barra, fecha, periodos), devuelve hasta n_max más típicas
     por forma y nivel: normaliza L2, mide centralidad (menor distancia media = más típica).
     Si hay menos de n_max curvas, devuelve todas las encontradas.
+
+    IMPORTANTE: Primero filtra outliers usando IQR antes de calcular tipicidad.
     """
     if not curvas:
         return []
-    if len(curvas) <= n_max:
-        return curvas
 
-    X, keys = _curvas_a_matriz(curvas)
+    # Paso 1: Filtrar outliers por IQR
+    curvas_filtradas = _filtrar_outliers_iqr(curvas)
+
+    if not curvas_filtradas:
+        return []
+    if len(curvas_filtradas) <= n_max:
+        return curvas_filtradas
+
+    X, keys = _curvas_a_matriz(curvas_filtradas)
     # Normalizar por L2 para que forma y nivel relativo cuenten
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
@@ -87,7 +138,7 @@ def _seleccionar_curvas_tipicas(
 
     # Más típicas = menor distancia media (más centrales)
     indices = np.argsort(mean_dists)[:n_max]
-    return [curvas[i] for i in indices]
+    return [curvas_filtradas[i] for i in indices]
 
 
 # =============================================================================
@@ -96,44 +147,47 @@ def _seleccionar_curvas_tipicas(
 
 def _calcular_fda_normalizado(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Aplica algoritmo FDA completo según legacy (modulofactores.aspx.cs líneas 2102-2312).
+    Aplica algoritmo FDA: normaliza valores para que cada período sume exactamente 1.0.
 
-    Algoritmo legacy:
-    1. Sumar TODOS los valores de cada periodo (TP1, TP2, ..., TP24)
-    2. Encontrar valor máximo de cada periodo (maxValP1, maxValP2, ..., maxValP24)
-    3. Calcular ajuste POR PERIODO: TP1 = 1 - TP1, TP2 = 1 - TP2, etc.
-    4. Aplicar ajuste: MaxP1 = maxValP1 + TP1, MaxP2 = maxValP2 + TP2, etc.
-    5. Reemplazar solo el valor máximo en cada fila
-    6. Resultado: cada periodo suma exactamente 1.0
+    Algoritmo:
+    1. Normalizar: dividir cada valor por la suma de su período (para que sume 1.0)
+    2. Calcular el ajuste fino necesario (diferencia con 1.0 por errores de redondeo)
+    3. Aplicar ajuste al valor máximo de cada período
+    4. Resultado: cada período suma exactamente 1.0
 
     Args:
-        df: DataFrame con periodos p1-p24
+        df: DataFrame con periodos p1-p24 (valores absolutos de potencia)
 
     Returns:
-        DataFrame con factores FDA normalizados
+        DataFrame con factores FDA normalizados (cada período suma 1.0)
     """
-    # Paso 1: Sumar todos los valores de cada periodo
+    # Paso 1: Normalizar dividiendo por la suma de cada período
     sumas_por_periodo = df[PERIODOS_COLUMNAS].sum()
-    
-    # Paso 2: Encontrar máximos por periodo
-    maximos_por_periodo = df[PERIODOS_COLUMNAS].max()
-    
-    # Paso 3: Calcular ajuste POR PERIODO (1 - suma de cada periodo)
-    ajustes_por_periodo = 1.0 - sumas_por_periodo
-    
-    # Paso 4: Calcular valores máximos ajustados
+
+    # Evitar división por cero
+    sumas_por_periodo = sumas_por_periodo.replace(0, 1)
+
+    # Normalizar: cada valor / suma del período
+    df_normalizado = df[PERIODOS_COLUMNAS].div(sumas_por_periodo)
+
+    # Paso 2: Calcular ajuste fino (por errores de redondeo después de normalizar)
+    sumas_normalizadas = df_normalizado.sum()
+    ajustes_por_periodo = 1.0 - sumas_normalizadas
+
+    # Paso 3: Encontrar máximos por período (en valores normalizados)
+    maximos_por_periodo = df_normalizado.max()
     maximos_ajustados = maximos_por_periodo + ajustes_por_periodo
-    
-    # Paso 5: Aplicar ajuste solo al máximo de cada periodo en cada fila
+
+    # Paso 4: Aplicar ajuste solo al máximo de cada período
     def aplicar_ajuste_row(row):
         return pd.Series([
-            round(maximos_ajustados[col], PRECISION_DECIMALES) if abs(row[col] - maximos_por_periodo[col]) < 1e-9 
+            round(maximos_ajustados[col], PRECISION_DECIMALES) if abs(row[col] - maximos_por_periodo[col]) < 1e-9
             else round(row[col], PRECISION_DECIMALES)
             for col in PERIODOS_COLUMNAS
         ], index=PERIODOS_COLUMNAS)
-    
-    df_ajustado = df[PERIODOS_COLUMNAS].apply(aplicar_ajuste_row, axis=1)
-    
+
+    df_ajustado = df_normalizado.apply(aplicar_ajuste_row, axis=1)
+
     return df_ajustado.round(PRECISION_DECIMALES)
 
 
@@ -229,7 +283,8 @@ def aplicar_clustering(
     mc: str,
     barra: str,
     flujo_tipo: str,
-    tipo_dia: str = ""
+    tipo_dia: str = "",
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Aplica factores multiplicadores a medidas y agrupa por barra+fecha.
@@ -249,21 +304,21 @@ def aplicar_clustering(
         Lista de medidas clusterizadas por fecha
     """
     # Obtener códigos RPM de la barra
-    codigos = factores_service.consultar_barra_nombre(barra)
+    codigos = factores_service.consultar_barra_nombre(barra, dsn=dsn)
     if not codigos:
         return []
 
     codigo_rpm = [row['codigo_rpm'] for row in codigos]
 
     # Obtener factores
-    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm)
+    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm, dsn=dsn)
     if not factores:
         return []
 
     # Obtener medidas
     flujos = [f['flujo'] for f in factores]
     medidas = factores_service.consultar_medidas_calcular_completo(
-        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False
+        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False, dsn=dsn
     )
 
     if not medidas:
@@ -317,6 +372,7 @@ def obtener_curvas_tipicas(
     flujo_tipo: str,
     n_max: int,
     barra: Optional[str] = None,
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Obtiene las N curvas más típicas del histórico (por forma y nivel).
@@ -334,7 +390,7 @@ def obtener_curvas_tipicas(
     if barra:
         barras_a_usar = [{"barra": barra}]
     else:
-        barras_a_usar = factores_service.consultar_barras_index_xmc(mc)
+        barras_a_usar = factores_service.consultar_barras_index_xmc(mc, dsn=dsn)
         if not barras_a_usar:
             return []
 
@@ -344,7 +400,7 @@ def obtener_curvas_tipicas(
         if not nombre_barra:
             continue
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia
+            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia, dsn=dsn
         )
         for m in medidas:
             curvas_todas.append({
@@ -381,6 +437,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
     flujo_tipo: str,
+    dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Obtiene medidas clusterizadas solo para las (barra, fecha) indicadas en curvas_tipicas.
@@ -391,7 +448,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     todas = []
     for barra in barras_unicas:
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia
+            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia, dsn=dsn
         )
         todas.extend(medidas)
     return _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
@@ -403,6 +460,7 @@ def calcular_fda_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Calcula FDA (Factor de Demanda Ajustada) solo sobre las curvas típicas indicadas.
@@ -416,12 +474,13 @@ def calcular_fda_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha} (salida de curvas-tipicas). FDA se calcula solo sobre estas.
+        dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDA normalizados
     """
     medidas_clusterizadas = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
     )
 
     if not medidas_clusterizadas:
@@ -442,13 +501,14 @@ def calcular_fda_para_tipo_dia(
 
     df = pd.DataFrame(df_list)
 
-    # Calcular sumas por periodo antes de normalizar (para el ajuste)
-    sumas_por_periodo = df[PERIODOS_COLUMNAS].sum()
-    ajustes_por_periodo = 1.0 - sumas_por_periodo
-    ajuste_promedio = ajustes_por_periodo.mean()  # Para el campo ajuste_aplicado en respuesta
-
     # Aplicar normalización FDA
     df_normalizado = _calcular_fda_normalizado(df)
+
+    # Calcular ajuste real aplicado (diferencia entre suma normalizada y 1.0)
+    # Este valor debería ser muy cercano a 0 después de la normalización
+    sumas_finales = df_normalizado[PERIODOS_COLUMNAS].sum()
+    ajustes_reales = (1.0 - sumas_finales).abs()
+    ajuste_promedio = ajustes_reales.mean()  # Promedio de ajustes por período
 
     # Agregar barra y fecha de vuelta
     df_normalizado['barra'] = df['barra'].values
@@ -468,6 +528,7 @@ def calcular_fdp_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Calcula FDP (Factor de Demanda Pronóstico) solo sobre las curvas típicas indicadas.
@@ -482,15 +543,16 @@ def calcular_fdp_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha}. FDP se calcula solo sobre estas.
+        dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDP calculados
     """
     medidas_a = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
     )
     medidas_r = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R"
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R", dsn=dsn
     )
 
     if not medidas_a or not medidas_r:

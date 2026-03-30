@@ -24,20 +24,20 @@ def _period_params(periodos: List[float]) -> Dict[str, Any]:
 
 # --- Barras ---
 
-def consultar_barras_index():
+def consultar_barras_index(dsn: Optional[str] = None):
     sql = (
         "SELECT id, barra, descripcion, nivel_tension, observaciones, habilitar, estado, mc "
         "FROM barras WHERE estado = 1 ORDER BY id"
     )
-    return fetch_all(sql)
+    return fetch_all(sql, dsn=dsn)
 
 
-def consultar_barras_index_xmc(mc: str):
+def consultar_barras_index_xmc(mc: str, dsn: Optional[str] = None):
     sql = (
         "SELECT id, barra, descripcion, nivel_tension, observaciones, habilitar, estado, mc "
         "FROM barras WHERE mc = %(mc)s AND estado = 1 ORDER BY id"
     )
-    return fetch_all(sql, {"mc": mc})
+    return fetch_all(sql, {"mc": mc}, dsn=dsn)
 
 
 def consultar_barra(barra_id: str):
@@ -48,13 +48,13 @@ def consultar_barra(barra_id: str):
     return fetch_all(sql, {"id": barra_id})
 
 
-def consultar_barra_nombre(barra: str):
+def consultar_barra_nombre(barra: str, dsn: Optional[str] = None):
     sql = (
         "SELECT codigo_rpm FROM barras b "
         "INNER JOIN agrupaciones a ON b.id=a.barra_id "
         "WHERE barra = %(barra)s AND b.estado='1' AND a.estado='1' GROUP BY codigo_rpm"
     )
-    return fetch_all(sql, {"barra": barra})
+    return fetch_all(sql, {"barra": barra}, dsn=dsn)
 
 
 def consultar_barra_flujo_nombre(barra: str, tipo: str, codigo_rpm: List[str]):
@@ -70,7 +70,7 @@ def consultar_barra_flujo_nombre(barra: str, tipo: str, codigo_rpm: List[str]):
     return fetch_all(sql, params)
 
 
-def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str]):
+def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str], dsn: Optional[str] = None):
     in_clause, params = build_in_clause(codigo_rpm, "codigo_rpm")
     params.update({"barra": barra, "tipo": tipo})
     sql = (
@@ -79,7 +79,7 @@ def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str]):
         f"WHERE barra = %(barra)s AND codigo_rpm IN {in_clause} "
         "AND substring(flujo from 1 for 1) = %(tipo)s AND b.estado='1' AND a.estado='1'"
     )
-    return fetch_all(sql, params)
+    return fetch_all(sql, params, dsn=dsn)
 
 
 def consultar_barra_flujo_nombre_inicial(barra: str, tipo: str):
@@ -261,6 +261,7 @@ def consultar_medidas_calcular_completo(
     codigo_rpm: List[str],
     barra: str,
     marcado: bool = False,
+    dsn: Optional[str] = None,
 ):
     flujo_clause, flujo_params = build_in_clause(flujo, "flujo")
     rpm_clause, rpm_params = build_in_clause(codigo_rpm, "codigo_rpm")
@@ -300,7 +301,7 @@ def consultar_medidas_calcular_completo(
         sql += "AND ME.Marcado = '1' "
 
     sql += "GROUP BY ME.flujo, ME.fecha, ME.codigo_rpm, ME.p1, ME.p2, ME.p3, ME.p4, ME.p5, ME.p6, ME.p7, ME.p8, ME.p9, ME.p10, ME.p11, ME.p12, ME.p13, ME.p14, ME.p15, ME.p16, ME.p17, ME.p18, ME.p19, ME.p20, ME.p21, ME.p22, ME.p23, ME.p24, ME.Marcado ORDER BY ME.fecha ASC;"
-    return fetch_all(sql, params)
+    return fetch_all(sql, params, dsn=dsn)
 
 
 def consultar_medidas_calcular_completo_sin_barra(

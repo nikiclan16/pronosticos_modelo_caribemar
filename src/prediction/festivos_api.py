@@ -23,7 +23,7 @@ class FestivosAPIClient:
     (ForecastPipeline, CalendarClassifier) durante la ejecución actual.
     """
     
-    BASE_URL = "https://pronosticos.jmdatalabs.co/api/v1/admin/dashboard/configuracion/listarFestivos"
+    BASE_URL = "https://pronosticos.jmdatalabs.co/api/v1/admin/configuracion-interna/listarFestivos"
     
     def __init__(self, base_url: Optional[str] = None):
         """
@@ -59,6 +59,7 @@ class FestivosAPIClient:
         
         try:
             logger.debug(f"Solicitando festivos desde API: {url}")
+            print(f"[FESTIVOS] Request → {url}")
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             

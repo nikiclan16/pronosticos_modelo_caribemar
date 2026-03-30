@@ -68,7 +68,7 @@ def aplicar_clustering(payload: ClusteringRequest):
             raise ValueError("flujo_tipo debe ser 'A' (Activa) o 'R' (Reactiva)")
         
         # Validar que la barra existe
-        barra_exists = factores_service.consultar_barra_nombre(payload.barra)
+        barra_exists = factores_service.consultar_barra_nombre(payload.barra, dsn=payload.database_url)
         if not barra_exists:
             raise ValueError(f"La barra '{payload.barra}' no existe")
 
@@ -79,6 +79,7 @@ def aplicar_clustering(payload: ClusteringRequest):
             payload.barra,
             payload.flujo_tipo,
             payload.tipo_dia or "",
+            dsn=payload.database_url,
         )
 
         if not data:
@@ -129,7 +130,7 @@ def obtener_curvas_tipicas(payload: CurvasTipicasRequest):
         if payload.tipo_dia not in ("ORDINARIO", "SABADO", "FESTIVO"):
             raise ValueError("tipo_dia debe ser ORDINARIO, SABADO o FESTIVO")
         if payload.barra:
-            barra_exists = factores_service.consultar_barra_nombre(payload.barra)
+            barra_exists = factores_service.consultar_barra_nombre(payload.barra, dsn=payload.database_url)
             if not barra_exists:
                 raise ValueError(f"La barra '{payload.barra}' no existe")
 
@@ -141,6 +142,7 @@ def obtener_curvas_tipicas(payload: CurvasTipicasRequest):
             payload.flujo_tipo,
             payload.n_max,
             payload.barra,
+            dsn=payload.database_url,
         )
         return {"ok": True, "data": data, "n": len(data)}
     except ValueError as e:
@@ -193,6 +195,7 @@ def calcular_fda(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            dsn=payload.database_url,
         )
         suma = resultado.get("suma_total", 0)
         if resultado.get("n_registros", 0) > 0 and abs(suma - 1.0) > 1e-5:
@@ -253,6 +256,7 @@ def calcular_fdp(payload: CalculoFDPRequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            dsn=payload.database_url,
         )
         return {
             "ok": True,
@@ -306,6 +310,7 @@ def calcular_fda_y_fdp(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            dsn=payload.database_url,
         )
         fdp_resultado = service.calcular_fdp_para_tipo_dia(
             payload.fecha_inicial,
@@ -313,6 +318,7 @@ def calcular_fda_y_fdp(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            dsn=payload.database_url,
         )
         return {
             "ok": True,
