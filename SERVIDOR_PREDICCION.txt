@@ -1,0 +1,127 @@
+API DE PRONOSTICO DE DEMANDA — DOCUMENTACION TECNICA
+
+Resumen
+Servicio de prediccion de demanda energetica por UCP con granularidad horaria (P1..P24). Incluye reentrenamiento, health del sistema, validacion de ajustes manuales, curvas base y combinaciones de resultados.
+
+Codigo
+- Entrada principal: src/api/main.py
+- Logica de prediccion: src/prediction/
+- Pipeline de datos: src/pipeline/
+
+Requisitos
+- Python con dependencias del proyecto.
+- Acceso a datos en data/raw/ y data/features/.
+- Modelos en models/ (si ya existen) o permisos para entrenarlos.
+
+Ejecucion local
+Opcion A (directo):
+1) Instalar dependencias del proyecto.
+2) Ejecutar:
+   python src/api/main.py
+
+Opcion B (uvicorn):
+1) Instalar uvicorn si no esta disponible.
+2) Ejecutar:
+   uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+
+Documentacion interactiva
+- http://localhost:8000/docs
+
+Convenciones
+- Formato de fechas: YYYY-MM-DD.
+- Respuestas JSON con claves estandarizadas.
+- Algunos endpoints registran logs extensos para trazabilidad.
+
+Como usar los endpoints
+Notas:
+- Los ejemplos usan http://localhost:8000 como base.
+- Ajusta los valores segun tu entorno (ucp, fechas, etc.).
+
+Health y modelos
+- Health general:
+  curl "http://localhost:8000/health"
+- Health por UCP:
+  curl "http://localhost:8000/health?ucp=Atlantico"
+- Listar modelos:
+  curl "http://localhost:8000/models"
+- Listar modelos por UCP:
+  curl "http://localhost:8000/models?ucp=Atlantico"
+
+Prediccion
+- Prediccion principal:
+  curl -X POST "http://localhost:8000/predict" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","end_date":"2023-06-30","n_days":3,"force_retrain":false,"offset_scalar":1.0}'
+
+- Prediccion de un dia con referencia:
+  curl -X POST "http://localhost:8000/predict-day" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha":"2023-07-01","fecha_referencia":"2023-06-01","force_retrain":false,"offset_scalar":1.0}'
+
+- Historico escalado (+2%):
+  curl -X POST "http://localhost:8000/predict-day-scaled" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha":"2023-07-01","fecha_referencia":"2023-06-01","force_retrain":false,"offset_scalar":1.0}'
+
+Curvas base
+- Obtener curvas base:
+  curl -X POST "http://localhost:8000/base-curve" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha_inicio":"2023-07-01","fecha_fin":"2023-07-03"}'
+
+- Prediccion + curva base (combinado):
+  curl -X POST "http://localhost:8000/predict-with-base-curve" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha_inicio":"2023-07-01","fecha_fin":"2023-07-03","data":[{"fecha":"2023-07-01","tipopronostico":"Modelo IA"},{"fecha":"2023-07-02","tipopronostico":"Modelo Base"}]}'
+
+Ajustes manuales
+- Validar ajustes horarios:
+  curl -X POST "http://localhost:8000/validate-hourly-adjustments" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha":"2023-07-01","predicciones_actuales":[100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100],"ajustes_solicitados":[0,0,0,0,0,0,0,0,0,0,0,0,10,0,0,0,0,0,0,0,0,0,0,0]}'
+
+Eventos
+- Obtener eventos futuros:
+  curl -X POST "http://localhost:8000/get_events" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha_inicio":"2023-07-01","fecha_fin":"2023-07-07"}'
+
+Root
+- GET /
+  Descripcion: informacion basica de la API y listado resumido de endpoints.
+
+Health
+- GET /health?ucp=...
+  Descripcion: estado general o por UCP.
+
+Modelos
+- GET /models?ucp=...
+  Descripcion: lista modelos entrenados.
+
+Reentrenamiento
+- POST /retrain?ucp=...
+  Descripcion: reentrena modelos para un UCP.
+
+Prediccion
+- POST /predict
+  Descripcion: prediccion principal.
+- POST /Error-feedback
+  Descripcion: flujo legacy completo.
+- POST /predict-day
+  Descripcion: predice un dia y compara contra fecha_referencia.
+- POST /predict-day-scaled
+  Descripcion: retorna historico escalado +2%.
+
+Curvas base
+- POST /base-curve
+  Descripcion: calcula curvas base (P1..P24).
+- POST /predict-with-base-curve
+  Descripcion: combinado de prediccion y curva base.
+
+Ajustes manuales
+- POST /validate-hourly-adjustments
+  Descripcion: valida ajustes manuales del usuario.
+
+Eventos
+- POST /get_events
+  Descripcion: obtiene eventos futuros via OpenAI.

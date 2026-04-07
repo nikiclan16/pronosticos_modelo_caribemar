@@ -2177,10 +2177,7 @@ async def predict_single_day_scaled(request: SingleDayPredictRequest):
                 scaled_val = max(pred_val, 0.0)
             else:
                 delta = pred_val - hist_val
-                if delta <= 0:
-                    scaled_val = hist_val * 1.01
-                else:
-                    scaled_val = hist_val + target_factor * delta
+                scaled_val = max(hist_val + target_factor * delta, 0.0)
             scaled_profile[key] = scaled_val
             total_scaled += scaled_val
 
