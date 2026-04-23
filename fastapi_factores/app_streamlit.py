@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # URL base de la API
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://localhost:8001"
 
 # Título principal
 st.title("⚡ Sistema de Factores de Demanda Eléctrica")
@@ -310,7 +310,7 @@ if ejecutar:
                     st.error(f"Error en la API: {response.status_code} - {response.text}")
 
         except requests.exceptions.ConnectionError:
-            st.error("❌ No se pudo conectar a la API. Asegúrate de que el servidor FastAPI esté corriendo en http://localhost:8000")
+            st.error("❌ No se pudo conectar a la API. Asegúrate de que el servidor FastAPI esté corriendo en http://localhost:8001")
         except Exception as e:
             st.error(f"❌ Error inesperado: {str(e)}")
 

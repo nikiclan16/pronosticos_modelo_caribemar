@@ -73,7 +73,7 @@ st.markdown("""
 # ============================================================================
 
 # URL base de la API (configurable)
-DEFAULT_API_URL = "http://localhost:8000"
+DEFAULT_API_URL = "http://localhost:8001"
 
 # ============================================================================
 # FUNCIONES DE CARGA DE DATOS HISTÓRICOS
@@ -753,7 +753,7 @@ def main():
     api_url = st.sidebar.text_input(
         "URL de la API",
         value=DEFAULT_API_URL,
-        help="URL base del servidor de la API (ej: http://localhost:8000)"
+        help="URL base del servidor de la API (ej: http://localhost:8001)"
     )
     
     # Verificar conexión con la API

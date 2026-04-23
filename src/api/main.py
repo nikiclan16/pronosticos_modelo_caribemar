@@ -3582,7 +3582,7 @@ async def startup_event():
     logger.info("🚀 INICIANDO API DE PRONÓSTICO DE DEMANDA ENERGÉTICA - EPM")
     logger.info("="*80)
     logger.info(f"Versión: 1.0.0")
-    logger.info(f"Documentación: http://localhost:8000/docs")
+    logger.info(f"Documentación: http://localhost:8001/docs")
     logger.info("="*80)
 
 

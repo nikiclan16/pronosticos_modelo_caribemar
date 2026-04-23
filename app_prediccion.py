@@ -26,7 +26,7 @@ st.sidebar.header("Parámetros de Predicción")
 # URL del API
 api_url = st.sidebar.text_input(
     "URL del API",
-    value="http://localhost:8000",
+    value="http://localhost:8001",
     help="URL base del servidor FastAPI"
 )
 
