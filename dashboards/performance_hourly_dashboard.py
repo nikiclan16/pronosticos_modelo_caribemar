@@ -1845,7 +1845,7 @@ def main():
                 st.success(f"✅ {len(df_prod)} predicciones generadas (test set: últimos 10% de datos)")
         
         elif option == "Desde API":
-            api_url = st.text_input("URL de la API", value="http://localhost:8000")
+            api_url = st.text_input("URL de la API", value="http://localhost:8001")
             
             if st.button("🔮 Generar Predicción desde API"):
                 import requests
