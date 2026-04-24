@@ -455,7 +455,7 @@ class FeatureEngineer:
 
         # Rellenar valores faltantes de features (forward fill y luego 0)
         feature_cols = [col for col in self.feature_names if col in df_model.columns]
-        df_model[feature_cols] = df_model[feature_cols].fillna(method='ffill').fillna(0)
+        df_model[feature_cols] = df_model[feature_cols].ffill().fillna(0)
 
         logger.info(f"\n✓ DataFrame preparado para modelado:")
         logger.info(f"  - Forma: {df_model.shape}")
