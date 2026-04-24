@@ -2292,7 +2292,9 @@ async def predict_with_base_curve(request: PredictWithBaseCurveRequest):
         }
         forecast_list = request.data
         resultado = {}
-
+        # ✅ ESTO VA DENTRO DEL TRY (bien indentado)
+        logger.info(f"Fechas predicción: {list(data_prediction.keys())}")
+        logger.info(f"Fechas solicitadas: {[item.fecha for item in forecast_list]}")
         for item in forecast_list:
             fecha = item.fecha
 
