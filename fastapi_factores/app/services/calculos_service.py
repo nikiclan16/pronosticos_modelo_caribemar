@@ -11,10 +11,13 @@ Este módulo implementa los algoritmos de:
 from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
 import numpy as np
+import logging
 
 from app.services import factores_service
 
 
+# Configurar logging
+logger = logging.getLogger(__name__)
 # =============================================================================
 # CONSTANTES
 # =============================================================================
@@ -328,7 +331,10 @@ def aplicar_clustering(
     df = pd.DataFrame(medidas)
 
     # Crear diccionario de factores para lookup
-    factor_map = {(f['codigo_rpm'], f['flujo']): float(f['factor']) for f in factores}
+    factor_map = {
+    (f['codigo_rpm'], f['flujo']): float(f['factor']) if f['factor'] not in (None, '', 'None') else 1.0
+    for f in factores
+}
 
     # Multiplicar periodos por factores
     # Las columnas de la consulta son: mep1, mep2, ..., mep24
@@ -431,27 +437,33 @@ def _filtrar_medidas_por_curvas_tipicas(
 
 
 def _obtener_medidas_clusterizadas_para_curvas_tipicas(
-    fecha_inicial: str,
-    fecha_final: str,
-    mc: str,
-    tipo_dia: str,
-    curvas_tipicas: List[Dict[str, Any]],
-    flujo_tipo: str,
-    dsn: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Obtiene medidas clusterizadas solo para las (barra, fecha) indicadas en curvas_tipicas.
-    """
+    fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, flujo_tipo, dsn=None
+):
     if not curvas_tipicas:
         return []
+    
+    # LOG TEMPORAL
+    logger.info(f"curvas_tipicas recibidas: {curvas_tipicas}")
+    
     barras_unicas = list({c["barra"] for c in curvas_tipicas})
     todas = []
     for barra in barras_unicas:
         medidas = aplicar_clustering(
             fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia, dsn=dsn
         )
+        # LOG TEMPORAL
+        logger.info(f"medidas clustering barra={barra}: {len(medidas)} registros")
+        logger.info(f"fechas en medidas: {[m['fecha'] for m in medidas]}")
         todas.extend(medidas)
-    return _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
+    
+    # LOG TEMPORAL
+    set_ref = {(c["barra"], str(c["fecha"])) for c in curvas_tipicas}
+    logger.info(f"set_ref para filtrar: {set_ref}")
+    
+    resultado = _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
+    logger.info(f"medidas tras filtro: {len(resultado)}")
+    
+    return resultado
 
 
 def calcular_fda_para_tipo_dia(

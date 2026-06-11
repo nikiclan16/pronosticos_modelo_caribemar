@@ -74,22 +74,29 @@ def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str], 
     in_clause, params = build_in_clause(codigo_rpm, "codigo_rpm")
     params.update({"barra": barra, "tipo": tipo})
     sql = (
-        "SELECT factor, codigo_rpm, flujo FROM barras b "
-        "INNER JOIN agrupaciones a ON b.id=a.barra_id "
-        f"WHERE barra = %(barra)s AND codigo_rpm IN {in_clause} "
-        "AND substring(flujo from 1 for 1) = %(tipo)s AND b.estado='1' AND a.estado='1'"
+        "SELECT DISTINCT ON (ME.flujo) a.factor, a.codigo_rpm, ME.flujo "
+        "FROM barras b "
+        "INNER JOIN agrupaciones a ON b.id = a.barra_id "
+        "INNER JOIN medidas ME ON ME.codigo_rpm = a.codigo_rpm "
+        f"WHERE b.barra = %(barra)s AND a.codigo_rpm IN {in_clause} "
+        "AND substring(ME.flujo from 1 for 1) = %(tipo)s "
+        "AND b.estado = '1' AND a.estado = '1' "
+        "ORDER BY ME.flujo"
     )
     return fetch_all(sql, params, dsn=dsn)
 
 
-def consultar_barra_flujo_nombre_inicial(barra: str, tipo: str):
+def consultar_barra_flujo_nombre_inicial(barra: str, tipo: str, dsn: Optional[str] = None):
     sql = (
-        "SELECT flujo FROM barras b "
-        "INNER JOIN agrupaciones a ON b.id=a.barra_id "
-        "WHERE barra = %(barra)s AND substring(flujo from 1 for 1) = %(tipo)s "
-        "AND b.estado='1' AND a.estado='1' GROUP BY flujo"
+        "SELECT DISTINCT ME.flujo "
+        "FROM barras b "
+        "INNER JOIN agrupaciones a ON b.id = a.barra_id "
+        "INNER JOIN medidas ME ON ME.codigo_rpm = a.codigo_rpm "
+        "WHERE b.barra = %(barra)s "
+        "AND substring(ME.flujo from 1 for 1) = %(tipo)s "
+        "AND b.estado = '1' AND a.estado = '1'"
     )
-    return fetch_all(sql, {"barra": barra, "tipo": tipo})
+    return fetch_all(sql, {"barra": barra, "tipo": tipo}, dsn=dsn)
 
 
 def consultar_barras_mercado(mc: str):
@@ -263,46 +270,69 @@ def consultar_medidas_calcular_completo(
     marcado: bool = False,
     dsn: Optional[str] = None,
 ):
-    flujo_clause, flujo_params = build_in_clause(flujo, "flujo")
     rpm_clause, rpm_params = build_in_clause(codigo_rpm, "codigo_rpm")
     params = {"fecha_inicial": fecha_inicial, "fecha_final": fecha_final}
-    params.update(flujo_params)
     params.update(rpm_params)
 
+    # Extraer tipo de flujo del primer carácter ("A" o "R")
+    params["tipo_flujo"] = flujo[0][0] if flujo and flujo[0] else "A"
+
     sql = (
-        "SELECT %(barra)s AS BAbarra, ME.flujo AS MEflujo, TO_CHAR(ME.fecha, 'DD-MM-YYYY') AS MEfecha, "
+        "SELECT %(barra)s AS BAbarra, ME.flujo AS MEflujo, "
+        "TO_CHAR(ME.fecha, 'YYYY-MM-DD') AS MEfecha, "
         "ME.codigo_rpm AS MEcodigo_rpm, "
-        "(ME.p1 + ME.p2 + ME.p3 + ME.p4 + ME.p5 + ME.p6 + ME.p7 + ME.p8 + ME.p9 + ME.p10 + ME.p11 + ME.p12 + ME.p13 + ME.p14 + ME.p15 + ME.p16 + ME.p17 + ME.p18 + ME.p19 + ME.p20 + ME.p21 + ME.p22 + ME.p23 + ME.p24) As MEtotal, "
-        "(ME.p1) As MEp1, (ME.p2) As MEp2, (ME.p3) As MEp3, (ME.p4) As MEp4, (ME.p5) As MEp5, (ME.p6) As MEp6, (ME.p7) As MEp7, (ME.p8) As MEp8, (ME.p9) As MEp9, (ME.p10) As MEp10, (ME.p11) As MEp11, (ME.p12) As MEp12, (ME.p13) As MEp13, (ME.p14) As MEp14, (ME.p15) As MEp15, (ME.p16) As MEp16, (ME.p17) As MEp17, (ME.p18) As MEp18, (ME.p19) As MEp19, (ME.p20) As MEp20, (ME.p21) As MEp21, (ME.p22) As MEp22, (ME.p23) As MEp23, (ME.p24) As MEp24, (ME.Marcado) As MEMarcado "
+        "(ME.p1+ME.p2+ME.p3+ME.p4+ME.p5+ME.p6+ME.p7+ME.p8+ME.p9+ME.p10+ME.p11+ME.p12+"
+        "ME.p13+ME.p14+ME.p15+ME.p16+ME.p17+ME.p18+ME.p19+ME.p20+ME.p21+ME.p22+ME.p23+ME.p24) AS MEtotal, "
+        "ME.p1 AS MEp1, ME.p2 AS MEp2, ME.p3 AS MEp3, ME.p4 AS MEp4, "
+        "ME.p5 AS MEp5, ME.p6 AS MEp6, ME.p7 AS MEp7, ME.p8 AS MEp8, "
+        "ME.p9 AS MEp9, ME.p10 AS MEp10, ME.p11 AS MEp11, ME.p12 AS MEp12, "
+        "ME.p13 AS MEp13, ME.p14 AS MEp14, ME.p15 AS MEp15, ME.p16 AS MEp16, "
+        "ME.p17 AS MEp17, ME.p18 AS MEp18, ME.p19 AS MEp19, ME.p20 AS MEp20, "
+        "ME.p21 AS MEp21, ME.p22 AS MEp22, ME.p23 AS MEp23, ME.p24 AS MEp24, "
+        "ME.Marcado AS MEMarcado "
         "FROM medidas ME "
         "WHERE ME.fecha >= %(fecha_inicial)s AND ME.fecha <= %(fecha_final)s "
         f"AND ME.codigo_rpm IN {rpm_clause} "
-        f"AND ME.flujo IN {flujo_clause} "
+        "AND substring(ME.flujo from 1 for 1) = %(tipo_flujo)s "
     )
     params["barra"] = barra
 
     if tipo_dia == "ORDINARIO":
         sql += (
             "AND date_part('dow', ME.fecha) in (1, 2, 3, 4, 5) "
-            "AND (ME.fecha not in (SELECT fecha FROM festivos WHERE ucp=%(mc)s AND fecha >= %(fecha_inicial)s AND fecha <= %(fecha_final)s) "
-            "AND date_part('dow', ME.fecha) in (1, 2, 3, 4, 5)) "
+            "AND ME.fecha not in ("
+            "SELECT fecha FROM festivos "
+            "WHERE ucp=%(mc)s "
+            "AND fecha >= %(fecha_inicial)s "
+            "AND fecha <= %(fecha_final)s"
+            ") "
         )
         params["mc"] = mc
     elif tipo_dia == "SABADO":
         sql += "AND date_part('dow', ME.fecha) in (6) "
     elif tipo_dia == "FESTIVO":
         sql += (
-            "AND (ME.fecha in (SELECT fecha FROM festivos WHERE ucp=%(mc)s AND fecha >= %(fecha_inicial)s AND fecha <= %(fecha_final)s) "
-            "OR date_part('dow', ME.fecha) in (0)) "
+            "AND (ME.fecha in ("
+            "SELECT fecha FROM festivos "
+            "WHERE ucp=%(mc)s "
+            "AND fecha >= %(fecha_inicial)s "
+            "AND fecha <= %(fecha_final)s"
+            ") OR date_part('dow', ME.fecha) in (0)) "
         )
         params["mc"] = mc
 
     if marcado:
         sql += "AND ME.Marcado = '1' "
 
-    sql += "GROUP BY ME.flujo, ME.fecha, ME.codigo_rpm, ME.p1, ME.p2, ME.p3, ME.p4, ME.p5, ME.p6, ME.p7, ME.p8, ME.p9, ME.p10, ME.p11, ME.p12, ME.p13, ME.p14, ME.p15, ME.p16, ME.p17, ME.p18, ME.p19, ME.p20, ME.p21, ME.p22, ME.p23, ME.p24, ME.Marcado ORDER BY ME.fecha ASC;"
+    sql += (
+        "GROUP BY ME.flujo, ME.fecha, ME.codigo_rpm, "
+        "ME.p1, ME.p2, ME.p3, ME.p4, ME.p5, ME.p6, "
+        "ME.p7, ME.p8, ME.p9, ME.p10, ME.p11, ME.p12, "
+        "ME.p13, ME.p14, ME.p15, ME.p16, ME.p17, ME.p18, "
+        "ME.p19, ME.p20, ME.p21, ME.p22, ME.p23, ME.p24, "
+        "ME.Marcado ORDER BY ME.fecha ASC;"
+    )
     return fetch_all(sql, params, dsn=dsn)
-
 
 def consultar_medidas_calcular_completo_sin_barra(
     fecha_inicial: str,
