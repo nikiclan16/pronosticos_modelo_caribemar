@@ -527,6 +527,11 @@ def calcular_fda_para_tipo_dia(
     ajustes_reales = (1.0 - sumas_finales).abs()
     ajuste_promedio = ajustes_reales.mean()  # Promedio de ajustes por período
 
+    # LOG TEMPORAL - DEBUG FDA
+    logger.info(f"FDA {tipo_dia}: n_rows={len(df_normalizado)}, suma_p1_normalizado={round(sumas_finales['p1'], 5)}, suma_p1_original={round(df['p1'].sum(), 5)}")
+    logger.info(f"FDA {tipo_dia}: primeros 5 valores p1 ANTES normalizacion: {df['p1'].head(5).tolist()}")
+    logger.info(f"FDA {tipo_dia}: primeros 5 valores p1 DESPUES normalizacion: {df_normalizado['p1'].head(5).tolist()}")
+
     # Agregar barra y fecha de vuelta
     df_normalizado['barra'] = df['barra'].values
     df_normalizado['fecha'] = df['fecha'].values
