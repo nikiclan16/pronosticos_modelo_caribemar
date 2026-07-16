@@ -32,6 +32,13 @@ from src.prediction.hourly import HourlyDisaggregationEngine
 from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
 from src.pipeline.update_csv import full_update_csv
 from fastapi.concurrency import run_in_threadpool
+import sys
+
+# En Windows, stdout/stderr usan por defecto el codepage de la consola (ej. cp1252),
+# lo que rompe cualquier print()/log con caracteres no-ASCII (emojis, →, etc.).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # Cargar variables de entorno
 load_dotenv()
@@ -325,7 +332,7 @@ class PredictRequest(BaseModel):
         30,
         description="Número de días a predecir",
         ge=1,
-        le=90
+        le=120
     )
     force_retrain: bool = Field(
         False,

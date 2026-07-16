@@ -23,8 +23,18 @@ def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasifi
     df["Clasificador interno"] = clasificador
 
     # --- 7. Obtener día de la semana en español ---
-    # Esto devuelve nombres como: Monday→lunes, Tuesday→martes, etc.
-    df["TIPO DIA"] = pd.to_datetime(df["FECHA"]).dt.day_name(locale="es_ES.utf8")
+    # No depende del locale del sistema operativo (locale="es_ES.utf8" falla en Windows
+    # y en Linux sin el paquete de idioma instalado), se mapea manualmente.
+    dias_es = {
+        "Monday": "Lunes",
+        "Tuesday": "Martes",
+        "Wednesday": "Miércoles",
+        "Thursday": "Jueves",
+        "Friday": "Viernes",
+        "Saturday": "Sábado",
+        "Sunday": "Domingo",
+    }
+    df["TIPO DIA"] = pd.to_datetime(df["FECHA"]).dt.day_name().map(dias_es)
 
     # --- 8. Reordenar columnas como tu CSV ---
     final_cols = ['UCP', 'VARIABLE', 'FECHA', 'Clasificador interno', 'TIPO DIA'] + cols_p + ["TOTAL"]
@@ -40,7 +50,7 @@ def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasifi
     print("CSV generado correctamente.")
 #-- 2. Función para solicitar datos y generar CSV ---
 def regresar_nuevo_csv(ucp):
-    
+
 
     path = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / ucp / "datos.csv"
 
@@ -51,8 +61,12 @@ def regresar_nuevo_csv(ucp):
         base_url = "http://localhost:3001"
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
-        print(response.json())
-        json_to_csv_power(response.json(),ucp,path)
+        response_json = response.json()
+        print(response_json)
+        if not response_json.get("success") or "data" not in response_json:
+            print(f"No hay historicos disponibles para {ucp}: {response_json.get('message')}")
+            return
+        json_to_csv_power(response_json,ucp,path)
     else:
         df=pd.read_csv(path)
         fecha_inicio=df['FECHA'].max()
@@ -61,8 +75,12 @@ def regresar_nuevo_csv(ucp):
         base_url = "http://localhost:3001"
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
-        print(response.json())
-        json_to_csv_power(response.json(),ucp,path)
+        response_json = response.json()
+        print(response_json)
+        if not response_json.get("success") or "data" not in response_json:
+            print(f"No hay historicos nuevos para {ucp}: {response_json.get('message')}")
+            return
+        json_to_csv_power(response_json,ucp,path)
 #-- 3. Función para solicitar datos climáticos, pasar de json a CSV y guardarlo---
 def regresar_nuevo_csv_clima(response_json,ruta):
     df = pd.DataFrame(response_json["data"])
@@ -100,8 +118,12 @@ def req_clima_api(ucp):
         base_url = "http://localhost:3001"
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
-        print(response.json())
-        regresar_nuevo_csv_clima(response.json(),path)
+        response_json = response.json()
+        print(response_json)
+        if not response_json.get("success") or "data" not in response_json:
+            print(f"No hay datos climaticos disponibles para {ucp}: {response_json.get('message')}")
+            return
+        regresar_nuevo_csv_clima(response_json,path)
     else:
         df=pd.read_csv(path)
         fecha_inicio=df['fecha'].max()
@@ -110,8 +132,12 @@ def req_clima_api(ucp):
         base_url = "http://localhost:3001"
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
-        print(response.json())
-        regresar_nuevo_csv_clima(response.json(),path)
+        response_json = response.json()
+        print(response_json)
+        if not response_json.get("success") or "data" not in response_json:
+            print(f"No hay datos climaticos nuevos para {ucp}: {response_json.get('message')}")
+            return
+        regresar_nuevo_csv_clima(response_json,path)
 
 
 
